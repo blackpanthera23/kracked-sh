@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>kracked.sh — Kracked Devs Community</title>
+  <meta name="description" content="A terminal-first community page for Kracked Devs. Type, ship, get seen." />
+  <meta property="og:title" content="kracked.sh" />
+  <meta property="og:description" content="Reimagine the Kracked Devs community page as a shell." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+</head>
+<body>
+  <!-- CRT frame -->
+  <div class="crt" id="crt">
+    <div class="crt__scanlines" aria-hidden="true"></div>
+    <div class="crt__vignette" aria-hidden="true"></div>
+    <div class="crt__flicker" aria-hidden="true"></div>
+
+    <main class="term" id="term">
+      <header class="term__bar">
+        <div class="term__dots" aria-hidden="true">
+          <span class="dot dot--r"></span>
+          <span class="dot dot--y"></span>
+          <span class="dot dot--g"></span>
+        </div>
+        <div class="term__title">
+          <span class="term__path">kracked@devs</span><span class="term__sep">:</span><span class="term__cwd" id="cwd">~</span>
+        </div>
+        <nav class="term__hint" aria-hidden="true">
+          <span><kbd>Tab</kbd> complete</span>
+          <span><kbd>↑</kbd><kbd>↓</kbd> history</span>
+          <span><kbd>Ctrl</kbd>+<kbd>L</kbd> clear</span>
+        </nav>
+      </header>
+
+      <div class="term__body" id="screen" role="log" aria-live="polite" aria-label="Terminal output">
+        <!-- boot + output rendered here -->
+      </div>
+
+      <form class="term__prompt" id="promptForm" autocomplete="off">
+        <label class="sr-only" for="cmd">Command input</label>
+        <span class="ps1" aria-hidden="true"><span class="ps1__user">visitor</span><span class="ps1__at">@</span><span class="ps1__host">kracked.sh</span><span class="ps1__c">:</span><span class="ps1__dir">~</span><span class="ps1__dollar">$</span></span>
+        <div class="ps1__inputwrap">
+          <input id="cmd" name="cmd" class="ps1__input" type="text" spellcheck="false"
+                 autocapitalize="off" autocomplete="off" autocorrect="off" aria-describedby="hint" />
+          <span class="caret" id="caret" aria-hidden="true"></span>
+        </div>
+      </form>
+
+      <footer class="term__status">
+        <span id="statusL">●</span>
+        <span id="status">ready</span>
+        <span class="term__spacer"></span>
+        <span id="clock">--:--:--</span>
+      </footer>
+    </main>
+
+    <!-- canvas layer for `attach` -->
+    <div class="graph" id="graph" aria-hidden="true">
+      <canvas id="graphCanvas"></canvas>
+      <div class="graph__hud" id="graphHud">
+        <span class="graph__label">COMMUNITY TOPOLOGY</span>
+        <span class="graph__hint">move to inspect · <kbd>Ctrl</kbd>+<kbd>C</kbd> to detach</span>
+        <div class="graph__tip" id="graphTip"></div>
+        <div class="graph__legend">
+          <span><i class="sw" style="background:hsl(150 85% 58%)"></i>online</span>
+          <span><i class="sw" style="background:hsl(40 85% 58%)"></i>building</span>
+          <span><i class="sw" style="background:hsl(265 85% 58%)"></i>away</span>
+          <span class="graph__legend-note">node size = power · line = collaboration</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <p id="hint" class="sr-only">Type <code>help</code> to list commands. Use Tab to complete, up and down arrows for history.</p>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

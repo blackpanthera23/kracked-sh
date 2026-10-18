@@ -58,7 +58,7 @@ export class Graph {
         y: Math.sin(a) * rad,
         vx: 0,
         vy: 0,
-        r: 4.5 + m.pwr / 30,
+        r: 3.5 + (m.pwr / 150) * 7.5,
         pulse: i * 0.7,
       });
     });
@@ -170,7 +170,7 @@ export class Graph {
     ctx.clearRect(0, 0, w, h);
 
     // faint measurement grid — gives the topology a sense of depth
-    ctx.strokeStyle = 'rgba(90, 130, 155, 0.055)';
+    ctx.strokeStyle = 'rgba(96, 142, 168, 0.11)';
     ctx.lineWidth = 1;
     const cx = w / 2;
     const cy = h / 2;

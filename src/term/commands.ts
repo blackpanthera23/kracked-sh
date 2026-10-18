@@ -3,8 +3,9 @@
  */
 
 import { COMMUNITY, MEMBERS, BOUNTIES, PROJECTS, Member, Project } from '../data';
+import { SHOWCASE, type ShowcaseProject } from '../showcase';
 import type { Command, Ctx } from './shell';
-import { line, blank, kv, table, pwrBar, tag, card, link, raw, cmdLink, cmdRow } from './output';
+import { line, blank, kv, table, pwrBar, tag, card as panel, link, raw, cmdLink, cmdRow } from './output';
 
 const pad = (s: string, n: number) => s + ' '.repeat(Math.max(0, n - s.length));
 
@@ -65,13 +66,13 @@ const help: Command['run'] = async (_a, ctx) => {
     }
     ctx.out(blank());
   }
-  ctx.out(line('  Tip: press Tab to complete, ↑/↓ to recall. Try `attach`.', 'line--faint'));
+  ctx.out(line('  Tip: press Tab to complete, ↑/↓ to recall. New here? type `start`.', 'line--faint'));
 };
 
 const whoami: Command['run'] = (_a, ctx) => {
   const me = MEMBERS[0];
   ctx.out(blank());
-  ctx.out(card(
+  ctx.out(panel(
     `${me.name}  ·  @${me.handle}`,
     `${me.role}  ·  pwr ${me.pwr}  ·  ${me.shipped} shipped  ·  ${me.status}`,
     me.bio,
@@ -122,7 +123,7 @@ const whois: Command['run'] = (args, ctx) => {
     return;
   }
   ctx.out(blank());
-  ctx.out(card(`${m.name}  ·  @${m.handle}`, `${m.role}  ·  ${m.status}`, m.bio));
+  ctx.out(panel(`${m.name}  ·  @${m.handle}`, `${m.role}  ·  ${m.status}`, m.bio));
   ctx.out(kv([
     ['power', `${m.pwr} pwr`],
     ['shipped', String(m.shipped)],
@@ -186,7 +187,7 @@ async function printBounty(id: string, ctx: Ctx): Promise<void> {
     return;
   }
   ctx.out(blank());
-  ctx.out(card(b.title, `${b.id}  ·  ${b.reward}  ·  ${b.slots} winner${b.slots > 1 ? 's' : ''}  ·  closes ${b.deadline}`, b.brief));
+  ctx.out(panel(b.title, `${b.id}  ·  ${b.reward}  ·  ${b.slots} winner${b.slots > 1 ? 's' : ''}  ·  closes ${b.deadline}`, b.brief));
   const tags = document.createElement('div');
   tags.className = 'line';
   b.tags.forEach((t) => tags.append(tag(t)));
@@ -195,7 +196,7 @@ async function printBounty(id: string, ctx: Ctx): Promise<void> {
 
 async function about(ctx: Ctx): Promise<void> {
   ctx.out(blank());
-  ctx.out(card(
+  ctx.out(panel(
     COMMUNITY.name,
     `${COMMUNITY.builders.toLocaleString()} builders  ·  ${COMMUNITY.shipped} shipped  ·  ${COMMUNITY.guilds} guilds`,
     COMMUNITY.tagline,
@@ -225,31 +226,38 @@ async function manifesto(ctx: Ctx): Promise<void> {
   }
 }
 
+/** Canonical URLs on the real site. */
+const projectUrl = (id: string) => `${COMMUNITY.showcase}/project/${id}`;
+
 const showcase: Command['run'] = (args, ctx) => {
-  const filter = args[0]?.toLowerCase();
+  const filter = args.join(' ').toLowerCase().trim();
   const rows = filter
-    ? PROJECTS.filter((p) =>
-        p.title.toLowerCase().includes(filter) ||
-        p.author.toLowerCase().includes(filter) ||
-        p.stack.some((s) => s.toLowerCase().includes(filter)),
+    ? SHOWCASE.filter(
+        (p) =>
+          p.title.toLowerCase().includes(filter) ||
+          p.author.toLowerCase().includes(filter) ||
+          p.stack.some((s) => s.toLowerCase().includes(filter)),
       )
-    : PROJECTS;
+    : SHOWCASE;
   if (!rows.length) {
-    ctx.out(line(`showcase: nothing matching "${args[0]}"`, 'line--warn'));
+    ctx.out(line(`showcase: nothing matching "${args.join(' ')}"`, 'line--warn'));
+    ctx.out(line('  try a stack (`showcase react`) or a handle (`showcase @yunn`).', 'line--faint'));
     return;
   }
+  const shown = rows.slice(0, 30);
   ctx.out(blank());
-  ctx.out(line(`  ${rows.length} of ${COMMUNITY.projects} projects`, 'line--faint'));
+  ctx.out(line(
+    `  ${rows.length}${rows.length > shown.length ? ` (showing ${shown.length})` : ''} of ${SHOWCASE.length} shipped projects`,
+    'line--faint',
+  ));
   ctx.out(blank());
-  ctx.out(table<Project>(rows, [
-    { head: 'project', cell: (p) => cmdLink(p.title, `open ${p.slug}`) },
+  ctx.out(table<ShowcaseProject>(shown, [
+    { head: 'project', cell: (p) => cmdLink(p.title, `open ${p.id}`) },
     { head: 'by', cell: (p) => `@${p.author}`, muted: true },
-    { head: 'pwr', num: true, cell: (p) => String(p.pwr) },
-    { head: 'votes', num: true, cell: (p) => String(p.votes) },
     { head: 'stack', cell: (p) => p.stack.slice(0, 3).join(' · '), muted: true },
-    { head: 'tags', cell: (p) => p.tags.join(' · '), muted: true },
+    { head: 'live', cell: (p) => (p.site ? link('visit ↗', p.site) : '—'), muted: true },
   ]));
-  ctx.out(line('  `open <title|slug|@author>` to jump to one — or click a row.', 'line--faint'));
+  ctx.out(line('  click a title to inspect · `open <title|@handle|id>` · `visit <project>` opens the live site', 'line--faint'));
 };
 
 /** Normalise a query: lowercase, strip a leading @, collapse separators. */
@@ -257,26 +265,45 @@ function normQuery(s: string): string {
   return s.toLowerCase().replace(/^@/, '').replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-/** Rank projects against a free-form query — exact slug/title beats author beats substring. */
-function resolveProjects(query: string): Project[] {
+/** Rank showcase projects against a free-form query. */
+function resolveProjects(query: string): ShowcaseProject[] {
   const q = normQuery(query);
   if (!q) return [];
-  const scored: [Project, number][] = [];
-  for (const p of PROJECTS) {
+  const scored: [ShowcaseProject, number][] = [];
+  for (const p of SHOWCASE) {
     const title = normQuery(p.title);
-    const slug = normQuery(p.slug);
     const author = normQuery(p.author);
     let score = 0;
-    if (slug === q || title === q) score = 100;
+    if (p.id === query.trim() || p.id.startsWith(query.trim())) score = 120; // exact uuid
+    else if (title === q) score = 100;
     else if (author === q) score = 90;
-    else if (title.startsWith(q) || slug.startsWith(q)) score = 70;
-    else if (title.includes(q) || slug.includes(q)) score = 50;
+    else if (title.startsWith(q)) score = 70;
+    else if (title.includes(q)) score = 50;
     else if (author.includes(q)) score = 40;
     else if (p.stack.some((s) => normQuery(s).includes(q))) score = 20;
-    else if (p.tags.some((t) => normQuery(t).includes(q))) score = 15;
     if (score) scored.push([p, score]);
   }
   return scored.sort((a, b) => b[1] - a[1]).map(([p]) => p);
+}
+
+/** A card for one project, with real links out to the site. */
+function projectCard(p: ShowcaseProject, ctx: Ctx): void {
+  const lvl = p.level > 1 ? `  ·  level ${p.level}` : '';
+  ctx.out(blank());
+  ctx.out(panel(p.title, `by @${p.author}${lvl}${p.site ? '  ·  shipped' : ''}`, p.oneLiner));
+  if (p.stack.length) ctx.out(kv([['stack', p.stack.join(', ')]]));
+  const links = document.createElement('div');
+  links.className = 'line';
+  links.append(link('showcase page ↗', projectUrl(p.id)));
+  if (p.site) links.append(document.createTextNode('  '), link('live site ↗', p.site));
+  if (p.git) links.append(document.createTextNode('  '), link('repo ↗', p.git));
+  ctx.out(links);
+  ctx.out(blank());
+  const next: [string, string][] = [[`whois @${p.author}`, `whois ${p.author}`]];
+  if (p.site) next.push(['visit', `visit ${p.id}`]);
+  next.push(['more by them', `showcase @${p.author}`], ['showcase', 'showcase']);
+  ctx.out(cmdRow('  next:', next));
+  ctx.out(blank());
 }
 
 const open: Command['run'] = (args, ctx) => {
@@ -291,41 +318,36 @@ const open: Command['run'] = (args, ctx) => {
     ctx.out(line('  try `showcase` for the list.', 'line--faint'));
     return;
   }
-  // an ambiguous query (e.g. an author with several projects) -> let them choose
-  const exact = normQuery(matches[0].title) === normQuery(raw) || normQuery(matches[0].slug) === normQuery(raw);
+  const exact = normQuery(matches[0].title) === normQuery(raw) || matches[0].id === raw.trim();
   if (matches.length > 1 && !exact) {
     ctx.out(blank());
     ctx.out(line(`  ${matches.length} projects match "${raw}" — pick one:`, 'line--warn'));
     ctx.out(blank());
-    ctx.out(table<Project>(matches, [
-      { head: 'project', cell: (p) => p.title },
+    ctx.out(table<ShowcaseProject>(matches.slice(0, 12), [
+      { head: 'project', cell: (p) => cmdLink(p.title, `open ${p.id}`) },
       { head: 'by', cell: (p) => `@${p.author}`, muted: true },
       { head: 'stack', cell: (p) => p.stack.slice(0, 2).join(' · '), muted: true },
-      { head: 'open', cell: (p) => cmdLink('open →', `open ${p.slug}`) },
     ]));
     return;
   }
-  const p = matches[0];
-  ctx.out(blank());
-  ctx.out(card(p.title, `by @${p.author}  ·  ${p.pwr} pwr  ·  ${p.votes} vote${p.votes === 1 ? '' : 's'}  ·  shipped ${p.shipped}`, p.oneLiner));
-  ctx.out(kv([['stack', p.stack.join(', ')]]));
-  const tags = document.createElement('div');
-  tags.className = 'line';
-  p.tags.forEach((t) => tags.append(tag(t)));
-  ctx.out(tags);
-  const lk = document.createElement('div');
-  lk.className = 'line';
-  lk.append(link('open on krackeddevs.com', COMMUNITY.showcase));
-  ctx.out(lk);
-  // continuity: the obvious next steps, one click away
-  const others = PROJECTS.filter((x) => x.author === p.author && x.slug !== p.slug);
-  ctx.out(blank());
-  ctx.out(cmdRow('  next:', [
-    [`whois @${p.author}`, `whois ${p.author}`],
-    ...others.slice(0, 2).map((o) => [o.title, `open ${o.slug}`] as [string, string]),
-    ['showcase', 'showcase'],
-  ]));
-  ctx.out(blank());
+  projectCard(matches[0], ctx);
+};
+
+/** Open the live site of a project in a new tab — the point of the showcase. */
+const visit: Command['run'] = (args, ctx) => {
+  const raw = args.join(' ');
+  const p = raw ? resolveProjects(raw)[0] : undefined;
+  if (!p) {
+    ctx.out(line(`visit: no project matching "${raw}"`, 'line--err'));
+    return;
+  }
+  if (!p.site) {
+    ctx.out(line(`visit: "${p.title}" has no live URL on record.`, 'line--warn'));
+    ctx.out(line('  try `open` to see its showcase page.', 'line--faint'));
+    return;
+  }
+  ctx.out(line(`  opening ${p.title} → ${p.site}`, 'line--ok'));
+  window.open(p.site, '_blank', 'noopener,noreferrer');
 };
 
 const stats: Command['run'] = (_a, ctx) => {
@@ -406,6 +428,7 @@ const clear: Command['run'] = (_a, ctx) => ctx.clear();
 
 const motd: Command['run'] = (_a, ctx) => {
   ctx.out(line('  the only résumé that matters is a URL that loads.', 'line--ok'));
+  ctx.out(line('  new here? type `start`.', 'line--faint'));
 };
 
 const exit: Command['run'] = (_a, ctx) => {
@@ -458,7 +481,99 @@ const matrix: Command['run'] = async (_a, ctx) => {
   ctx.out(line('  wake up, builder.', 'line--info'));
 };
 
+/* ------------------------------------------------- guided + player card --- */
+
+/** The newcomer path: one ordered set of steps, each clickable. */
+const start: Command['run'] = (_a, ctx) => {
+  ctx.out(blank());
+  ctx.out(line('  ── start here ──', 'line--info'));
+  ctx.out(line('  Four steps from "what is this" to "I shipped something".', 'line--faint'));
+  ctx.out(blank());
+  const steps: [string, string, string][] = [
+    ['1. what is Kracked Devs', 'about', 'the community, the guilds, the point'],
+    ['2. what builders earn', 'members', 'handles, power, what moves it'],
+    ['3. what people shipped', 'showcase', 'real projects, with live links'],
+    ['4. how you join in', 'join', 'bounties, submission, first ship'],
+  ];
+  for (const [label, cmd, note] of steps) {
+    const row = document.createElement('div');
+    row.className = 'line';
+    row.append(cmdLink(label, cmd), document.createTextNode(`  — ${note}`));
+    ctx.out(row);
+  }
+  ctx.out(blank());
+  ctx.out(cmdRow('  or skip ahead:', [
+    ['see the topology', 'attach'],
+    ['open bounties', 'bounties'],
+    ['read the manifesto', 'manifesto'],
+  ]));
+  ctx.out(blank());
+  ctx.out(line('  tip: `help` lists everything · `card` shows how power is scored', 'line--faint'));
+  ctx.out(blank());
+};
+
+/**
+ * Player card. Scored with the same formula the site uses:
+ *   pwr   = xp + 100*approvedProjects + 20*postCount + 50*badgeCount
+ *   level = min(floor(sqrt(pwr/100)) + 1, 100)
+ *   tier  = pwr >= 800 ? legendary : pwr >= 300 ? rare : common
+ * Elements are the site's four: FIRE (bounties) WATER (ships) VOLT (streak) WIND (badges).
+ */
+const ELEMENTS: { element: string; glyph: string; label: string; has: (m: Member) => boolean }[] = [
+  { element: 'WATER', glyph: '\u25bc', label: 'Ships projects to the showcase', has: (m) => m.shipped > 0 },
+  { element: 'FIRE', glyph: '\u25b2', label: 'Wins bounties and competitions', has: (m) => m.pwr >= 90 },
+  { element: 'VOLT', glyph: '\u2731', label: 'Keeps a live contribution streak', has: (m) => m.status === 'online' },
+  { element: 'WIND', glyph: '\u2248', label: 'Earns badges across the platform', has: (m) => m.pwr >= 60 },
+];
+
+const player: Command['run'] = (args, ctx) => {
+  const q = normQuery(args.join(' ') || 'blackpanthera23');
+  const m = MEMBERS.find((x) => normQuery(x.handle) === q || normQuery(x.name) === q);
+  if (!m) {
+    ctx.out(line(`card: unknown builder "${args.join(' ')}"`, 'line--err'));
+    ctx.out(line('  try `members` for handles.', 'line--faint'));
+    return;
+  }
+  const pwr = (m.xp ?? 0) + 100 * m.shipped + 20 * (m.posts ?? 0) + 50 * (m.badges ?? 0);
+  const level = Math.min(Math.floor(Math.sqrt(pwr / 100)) + 1, 100);
+  const tier = pwr >= 800 ? 'LEGENDARY' : pwr >= 300 ? 'RARE' : 'COMMON';
+
+  ctx.out(blank());
+  const head = document.createElement('div');
+  head.className = 'line';
+  head.append(
+    cmdLink(`@${m.handle}`, `whois ${m.handle}`),
+    document.createTextNode('   '),
+    tag(tier, tier === 'COMMON' ? '' : 'hot'),
+  );
+  ctx.out(head);
+  ctx.out(line(`  ${m.name} · ${m.role}`, 'line--faint'));
+  ctx.out(blank());
+  ctx.out(kv([
+    ['power', `${m.pwr} pwr`],
+    ['level', String(level)],
+    ['tier', tier],
+    ['shipped', String(m.shipped)],
+    ['stack', m.stack.join(', ')],
+  ]));
+  ctx.out(blank());
+  ctx.out(line('  elements', 'line--faint'));
+  for (const e of ELEMENTS) {
+    const on = e.has(m);
+    ctx.out(line(`   ${e.glyph} ${e.element.padEnd(6)} ${on ? e.label : '— locked'}`, on ? 'line--ok' : 'line--faint'));
+  }
+  ctx.out(blank());
+  ctx.out(cmdRow('  next:', [
+    ['whois', `whois ${m.handle}`],
+    ['showcase', 'showcase'],
+    ['members', 'members'],
+  ]));
+  ctx.out(blank());
+};
+
 export const REGISTRY: Command[] = [
+  { name: 'start',   args: '',  group: 'system',    summary: 'new here? the guided path', run: start },
+  { name: 'player',  args: '[handle]', group: 'community', summary: 'player card: level, tier, elements', run: player },
   { name: 'help',    args: '',  group: 'system',    summary: 'list every command', run: help },
   { name: 'whoami',  args: '',  group: 'community', summary: 'the operator behind this terminal', run: whoami },
   { name: 'members', args: '[stack|role]', group: 'community', summary: 'list builders, optionally filtered', run: members },
@@ -466,6 +581,7 @@ export const REGISTRY: Command[] = [
   { name: 'bounties', args: '', group: 'community', summary: 'open bounties and deadlines', run: bounties },
   { name: 'showcase', args: '[filter]', group: 'community', summary: 'browse shipped projects', run: showcase },
   { name: 'open',    args: '<project>', group: 'navigate', summary: 'open one project', usage: 'open <project>', run: open },
+  { name: 'visit',   args: '<project>', group: 'navigate', summary: 'open a project live site in a new tab', usage: 'visit <project>', run: visit },
   { name: 'cat',     args: '<bounties|about|manifesto>', group: 'navigate', summary: 'read a document', usage: 'cat <file>', run: cat },
   { name: 'about',   args: '', group: 'navigate', summary: 'what Kracked Devs is', run: (a, ctx) => cat(['about'], ctx) },
   { name: 'manifesto', args: '', group: 'navigate', summary: 'the six rules builders ship by', run: (a, ctx) => cat(['manifesto'], ctx) },

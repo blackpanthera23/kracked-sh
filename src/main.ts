@@ -309,7 +309,7 @@ screen.addEventListener('scroll', () => {
 /* ------------------------------------------------------------- idle demo --- */
 
 let idleTimer = 0;
-const DEMO: string[] = ['help', 'members', 'showcase'];
+const DEMO: string[] = ['start', 'showcase'];
 let demoRunning = false;
 
 function resetIdle() {
@@ -351,7 +351,7 @@ async function runDemo() {
     input.value = '';
     syncCaret();
     await execute(cmd);
-    if (cmd === 'members') {
+    if (cmd === 'start') {
       // continuity: leave a way into the topology right where the eye lands
       append(blank());
       append(suggestRow());

@@ -14,6 +14,10 @@ export interface Member {
   status: 'online' | 'building' | 'away';
   bio: string;
   links: { label: string; href: string }[];
+  /** Optional real counters; the card command scores with the site's formula. */
+  xp?: number;
+  posts?: number;
+  badges?: number;
 }
 
 export interface Bounty {
@@ -59,6 +63,9 @@ export const MEMBERS: Member[] = [
     stack: ['Vite', 'Cloudflare', 'Python'],
     pwr: 70,
     shipped: 1,
+    xp: 40,
+    posts: 2,
+    badges: 0,
     status: 'building',
     bio: 'Runs a one-person digital marketing practice. Ships static sites with hand-written CSS and pipeline gates that refuse to deploy broken builds.',
     links: [
@@ -84,6 +91,9 @@ export const MEMBERS: Member[] = [
     stack: ['Svelte', 'GSAP', 'WebGL'],
     pwr: 120,
     shipped: 6,
+    xp: 90,
+    posts: 4,
+    badges: 0,
     status: 'online',
     bio: 'Animation-first frontend. Treats every transition as a claim about what the product does.',
     links: [{ label: 'showcase', href: 'https://krackeddevs.com/showcase' }],
@@ -117,6 +127,9 @@ export const MEMBERS: Member[] = [
     stack: ['Python', 'Rust', 'CUDA'],
     pwr: 145,
     shipped: 7,
+    xp: 260,
+    posts: 9,
+    badges: 2,
     status: 'online',
     bio: 'Builds agent tooling and evaluation harnesses. Ships a failing test before shipping a feature.',
     links: [{ label: 'showcase', href: 'https://krackeddevs.com/showcase' }],
@@ -139,6 +152,9 @@ export const MEMBERS: Member[] = [
     stack: ['Terraform', 'K8s'],
     pwr: 80,
     shipped: 3,
+    xp: 60,
+    posts: 3,
+    badges: 0,
     status: 'away',
     bio: 'Keeps everyone else deployable. Measures success in failed deploys that never happened.',
     links: [{ label: 'showcase', href: 'https://krackeddevs.com/showcase' }],
@@ -150,6 +166,9 @@ export const MEMBERS: Member[] = [
     stack: ['Python', 'DuckDB', 'Polars'],
     pwr: 130,
     shipped: 5,
+    xp: 110,
+    posts: 5,
+    badges: 0,
     status: 'online',
     bio: 'Analytics engineer who treats a notebook as a draft and a pipeline as the artefact.',
     links: [{ label: 'showcase', href: 'https://krackeddevs.com/showcase' }],

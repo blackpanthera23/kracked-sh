@@ -98,6 +98,35 @@ const ctx: Ctx = {
 
 /* --------------------------------------------------------------- execute --- */
 
+/** Levenshtein distance, capped — used only for "did you mean". */
+function editDistance(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  if (!m) return n;
+  if (!n) return m;
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i, ...new Array<number>(n)];
+    for (let j = 1; j <= n; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = cur;
+  }
+  return prev[n];
+}
+
+/** Command names within a sensible edit distance, closest first, at most three. */
+function nearest(name: string): string[] {
+  const max = name.length <= 3 ? 1 : name.length <= 5 ? 2 : 3;
+  return COMMAND_NAMES
+    .filter((n) => n.startsWith('.') === name.startsWith('.'))
+    .map((n) => [n, editDistance(name, n)] as const)
+    .filter(([, d]) => d <= max)
+    .sort((a, b) => a[1] - b[1])
+    .slice(0, 3)
+    .map(([n]) => n);
+}
+
 async function execute(rawInput: string): Promise<void> {
   const src = rawInput.trim();
   if (!src) return;
@@ -110,7 +139,7 @@ async function execute(rawInput: string): Promise<void> {
 
   if (!cmd) {
     append(line(`kracked.sh: command not found: ${name}`, 'line--err'));
-    const near = COMMAND_NAMES.filter((n) => n.startsWith(name[0] ?? '')).slice(0, 4);
+    const near = nearest(name);
     if (near.length) append(line(`  did you mean: ${near.join(', ')}?`, 'line--faint'));
     else append(line('  type `help` for the list.', 'line--faint'));
     return;

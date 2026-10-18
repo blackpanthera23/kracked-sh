@@ -288,7 +288,7 @@ const stats: Command['run'] = (_a, ctx) => {
     ['guilds', String(COMMUNITY.guilds)],
   ]));
   ctx.out(blank());
-  ctx.out(line('  builderdist (pwr)', 'line--faint'));
+  ctx.out(line('  builder dist (pwr)', 'line--faint'));
   const top = [...MEMBERS].sort((a, b) => b.pwr - a.pwr).slice(0, 6);
   const max = top[0].pwr;
   for (const m of top) {
@@ -418,6 +418,8 @@ export const REGISTRY: Command[] = [
   { name: 'showcase', args: '[filter]', group: 'community', summary: 'browse shipped projects', run: showcase },
   { name: 'open',    args: '<project>', group: 'navigate', summary: 'open one project', usage: 'open <project>', run: open },
   { name: 'cat',     args: '<bounties|about|manifesto>', group: 'navigate', summary: 'read a document', usage: 'cat <file>', run: cat },
+  { name: 'about',   args: '', group: 'navigate', summary: 'what Kracked Devs is', run: (a, ctx) => cat(['about'], ctx) },
+  { name: 'manifesto', args: '', group: 'navigate', summary: 'the six rules builders ship by', run: (a, ctx) => cat(['manifesto'], ctx) },
   { name: 'attach',  args: '', group: 'navigate', summary: 'enter the community topology layer', run: attach },
   { name: 'join',    args: '', group: 'navigate', summary: 'how to become a builder', run: join },
   { name: 'stats',   args: '', group: 'system', summary: 'community numbers', run: stats },

@@ -114,10 +114,21 @@ export class Graph {
     }
     for (const n of this.nodes) { n.vx = 0; n.vy = 0; }
 
-    // recentre: relaxation can drift the whole cloud to one side
+    // recentre on the centroid, then normalise so the cloud fills the target disc
+    // instead of sprawling to one side
     const cx = this.nodes.reduce((s, n) => s + n.x, 0) / this.nodes.length;
     const cy = this.nodes.reduce((s, n) => s + n.y, 0) / this.nodes.length;
-    for (const n of this.nodes) { n.x -= cx; n.y -= cy; }
+    let maxR = 0;
+    for (const n of this.nodes) {
+      n.x -= cx; n.y -= cy;
+      maxR = Math.max(maxR, Math.hypot(n.x, n.y));
+    }
+    if (maxR > 1e-3) {
+      // scale so the outermost node sits on the clamp radius; also bump the
+      // minimum spread so a tightly-packed relaxation still fills the canvas
+      const k = Math.max(0.9, Math.min(2.2, 0.78 / maxR));
+      for (const n of this.nodes) { n.x *= k; n.y *= k; }
+    }
   }
 
   private resize = (): void => {
@@ -220,11 +231,12 @@ export class Graph {
         ctx.stroke();
       }
 
-      // labels: hubs always, others on hover, everything once hovered is cleared
-      const showLabel = hot || n.m.pwr >= 90;
+      // labels: the hovered node always, plus the top few by power
+      const showLabel = hot || n.m.pwr >= 130;
       if (showLabel) {
+        const fade = this.hover && !hot ? 0.16 : hot ? 0.95 : 0.5;
         ctx.font = '10px "JetBrains Mono", monospace';
-        ctx.fillStyle = `rgba(215, 227, 236, ${hot ? 0.95 : this.hover ? 0.18 : 0.45})`;
+        ctx.fillStyle = `rgba(215, 227, 236, ${fade})`;
         ctx.fillText(`@${n.m.handle}`, x + n.r + 7, y + 3);
       }
     }

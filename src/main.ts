@@ -79,7 +79,9 @@ const ctx: Ctx = {
       if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__graph = graph;
     } else {
       graph?.stop();
-      input.focus();
+      // term still carries .term--detached at this point, and focusing a
+      // visibility:hidden input is a silent no-op — wait for the style flush
+      requestAnimationFrame(() => input.focus());
     }
   },
   clear() {
@@ -226,6 +228,26 @@ form.addEventListener('submit', (e) => {
 
 input.addEventListener('input', syncCaret);
 
+/* While attached the prompt is visibility:hidden, so it cannot receive keys.
+   Listen on the document instead, or Ctrl+C / Escape become a dead zone. */
+function detachFromTopology(why: string): void {
+  if (!graph?.isRunning) return;
+  ctx.attach(false);
+  append(line(`  detached from topology (${why}).`, 'line--dim'));
+  ctx.status('ready');
+}
+
+document.addEventListener('keydown', (e) => {
+  if (!graph?.isRunning) return;
+  if (e.key === 'Escape' || (e.ctrlKey && (e.key === 'c' || e.key === 'C'))) {
+    e.preventDefault();
+    detachFromTopology(e.key === 'Escape' ? 'Esc' : 'Ctrl+C');
+  }
+});
+
+// clicking the canvas also detaches — the obvious thing to try
+document.getElementById('graph')?.addEventListener('click', () => detachFromTopology('click'));
+
 input.addEventListener('keydown', (e) => {
   // any real keypress hands control back to the visitor
   if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.length === 1) cancelDemo();
@@ -254,12 +276,7 @@ input.addEventListener('keydown', (e) => {
     return;
   }
   if (e.ctrlKey && e.key === 'c') {
-    if (graph?.isRunning) {
-      e.preventDefault();
-      ctx.attach(false);
-      append(line('  detached from topology.', 'line--dim'));
-      ctx.status('ready');
-    }
+    detachFromTopology('Ctrl+C');
     return;
   }
 });

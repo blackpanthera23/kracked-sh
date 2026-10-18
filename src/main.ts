@@ -227,6 +227,10 @@ form.addEventListener('submit', (e) => {
 input.addEventListener('input', syncCaret);
 
 input.addEventListener('keydown', (e) => {
+  // any real keypress hands control back to the visitor
+  if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.length === 1) cancelDemo();
+  resetIdle();
+
   if (e.key === 'Tab') {
     e.preventDefault();
     complete();
@@ -274,33 +278,49 @@ screen.addEventListener('scroll', () => {
 /* ------------------------------------------------------------- idle demo --- */
 
 let idleTimer = 0;
-const DEMO: string[] = ['help', 'stats', 'showcase', 'attach'];
+const DEMO: string[] = ['help', 'members', 'showcase'];
+let demoRunning = false;
 
 function resetIdle() {
   clearTimeout(idleTimer);
-  idleTimer = window.setTimeout(runDemo, 9000);
+  if (demoRunning) return;
+  idleTimer = window.setTimeout(runDemo, 14000);
+}
+
+/** Abort an in-flight demo the moment the visitor touches the keyboard. */
+function cancelDemo(): void {
+  if (!demoRunning) return;
+  demoRunning = false;
+  clearTimeout(idleTimer);
+  input.value = '';
+  syncCaret();
+  ctx.status('ready');
 }
 
 async function runDemo() {
-  if (input.value.trim()) return;
+  if (demoRunning || input.value.trim() || graph?.isRunning) return;
+  demoRunning = true;
   ctx.status('demo', false);
   append(blank());
-  append(line('  ── idle demo ──', 'line--faint'));
+  append(line('  ── idle demo (type anything to take over) ──', 'line--faint'));
 
   for (const cmd of DEMO) {
     await sleep(650);
+    if (!demoRunning) return;
     // type it out
     for (let i = 1; i <= cmd.length; i++) {
+      if (!demoRunning) { input.value = ''; syncCaret(); return; }
       input.value = cmd.slice(0, i);
       syncCaret();
       await sleep(55);
     }
     await sleep(220);
+    if (!demoRunning) { input.value = ''; syncCaret(); return; }
     input.value = '';
     syncCaret();
     await execute(cmd);
-    if (cmd === 'attach') break;
   }
+  demoRunning = false;
   ctx.status('ready');
 }
 

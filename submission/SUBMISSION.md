@@ -5,6 +5,12 @@ Reward: 3 × $150 AI tokens. Deadline 2026-10-18.
 
 ## Fields for the form
 
+**Live**
+https://blackpanthera23.github.io/kracked-sh/
+
+**Code**
+https://github.com/blackpanthera23/kracked-sh
+
 **Title**
 kracked.sh — the community as a shell
 

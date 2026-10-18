@@ -113,6 +113,27 @@ export function link(label: string, href: string): Node {
   return a;
 }
 
+/**
+ * A clickable command. Renders as `label` and, on click, types and runs
+ * `command` in the prompt — so the terminal stays the only surface.
+ * The command is carried in a data attribute; main.ts delegates the click.
+ */
+export function cmdLink(label: string, command: string, kind: '' | 'ghost' = ''): Node {
+  const b = el('button', `cmd${kind ? ' cmd--' + kind : ''}`, label);
+  b.type = 'button';
+  b.dataset.cmd = command;
+  b.title = `run: ${command}`;
+  return b;
+}
+
+/** Inline row of clickable commands, with an optional leading label. */
+export function cmdRow(label: string, commands: [string, string][]): Node {
+  const wrap = el('div', 'cmdrow');
+  if (label) wrap.append(el('span', 'cmdrow__label', label));
+  for (const [text, command] of commands) wrap.append(cmdLink(text, command));
+  return wrap;
+}
+
 /** Progress bar used by the boot sequence. Returns the fill element to animate. */
 export function progress(): { node: Node; fill: Node } {
   const wrap = el('span', 'prog');

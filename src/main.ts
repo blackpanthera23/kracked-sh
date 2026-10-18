@@ -10,7 +10,7 @@ import './style.css';
 import { REGISTRY, COMMAND_NAMES, banner, boot } from './term/commands';
 import { tokenize, History, type Ctx } from './term/shell';
 import { Graph } from './term/graph';
-import { line, blank, echo, raw } from './term/output';
+import { line, blank, echo, raw, cmdRow } from './term/output';
 import { MEMBERS } from './data';
 
 const screen  = document.getElementById('screen')!;
@@ -169,6 +169,7 @@ async function submit(rawInput: string) {
   setBusy(true);
   await execute(src);
   setBusy(false);
+  scheduleNudge();
 }
 
 /* ----------------------------------------------------------------- input --- */
@@ -248,6 +249,19 @@ document.addEventListener('keydown', (e) => {
 // clicking the canvas also detaches — the obvious thing to try
 document.getElementById('graph')?.addEventListener('click', () => detachFromTopology('click'));
 
+/* Clickable commands in the scrollback: any element carrying data-cmd runs
+   that command in the prompt. Keeps the terminal the single source of truth. */
+screen.addEventListener('click', (e) => {
+  const btn = (e.target as HTMLElement | null)?.closest<HTMLElement>('[data-cmd]');
+  if (!btn || graph?.isRunning) return;
+  e.preventDefault();
+  cancelDemo();
+  const cmd = btn.dataset.cmd ?? '';
+  if (!cmd) return;
+  input.focus();
+  void ctx.run(cmd);
+});
+
 input.addEventListener('keydown', (e) => {
   // any real keypress hands control back to the visitor
   if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.length === 1) cancelDemo();
@@ -306,6 +320,7 @@ function resetIdle() {
 
 /** Abort an in-flight demo the moment the visitor touches the keyboard. */
 function cancelDemo(): void {
+  clearTimeout(nudgeTimer);
   if (!demoRunning) return;
   demoRunning = false;
   clearTimeout(idleTimer);
@@ -336,9 +351,47 @@ async function runDemo() {
     input.value = '';
     syncCaret();
     await execute(cmd);
+    if (cmd === 'members') {
+      // continuity: leave a way into the topology right where the eye lands
+      append(blank());
+      append(suggestRow());
+    }
   }
   demoRunning = false;
   ctx.status('ready');
+}
+
+/* --------------------------------------------------------- suggestions --- */
+
+/** One-click nudge into the topology. Replaced, never duplicated. */
+let suggestEl: HTMLElement | null = null;
+
+function suggestRow(): HTMLElement {
+  suggestEl?.remove();
+  const row = cmdRow('  try this:', [
+    ['attach to community topology', 'attach'],
+    ['browse showcase', 'showcase'],
+  ]);
+  suggestEl = row;
+  return row;
+}
+
+/** After the visitor has sat with the output for a while, offer the next click. */
+let nudgeTimer = 0;
+function scheduleNudge(): void {
+  clearTimeout(nudgeTimer);
+  nudgeTimer = window.setTimeout(() => {
+    if (demoRunning || graph?.isRunning || input.value.trim()) return;
+    if (document.querySelector('.suggest')) return;
+    append(blank());
+    const row = cmdRow('  where to?', [
+      ['attach', 'attach'],
+      ['showcase', 'showcase'],
+      ['bounties', 'bounties'],
+    ]);
+    row.classList.add('suggest');
+    append(row);
+  }, 6000);
 }
 
 /* --------------------------------------------------------------- start-up --- */

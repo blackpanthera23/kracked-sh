@@ -4,7 +4,7 @@
 
 import { COMMUNITY, MEMBERS, BOUNTIES, PROJECTS, Member, Project } from '../data';
 import type { Command, Ctx } from './shell';
-import { line, blank, kv, table, pwrBar, tag, card, link, raw } from './output';
+import { line, blank, kv, table, pwrBar, tag, card, link, raw, cmdLink, cmdRow } from './output';
 
 const pad = (s: string, n: number) => s + ' '.repeat(Math.max(0, n - s.length));
 
@@ -242,30 +242,70 @@ const showcase: Command['run'] = (args, ctx) => {
   ctx.out(line(`  ${rows.length} of ${COMMUNITY.projects} projects`, 'line--faint'));
   ctx.out(blank());
   ctx.out(table<Project>(rows, [
-    { head: 'project', cell: (p) => p.title },
+    { head: 'project', cell: (p) => cmdLink(p.title, `open ${p.slug}`) },
     { head: 'by', cell: (p) => `@${p.author}`, muted: true },
     { head: 'pwr', num: true, cell: (p) => String(p.pwr) },
     { head: 'votes', num: true, cell: (p) => String(p.votes) },
     { head: 'stack', cell: (p) => p.stack.slice(0, 3).join(' · '), muted: true },
     { head: 'tags', cell: (p) => p.tags.join(' · '), muted: true },
   ]));
-  ctx.out(line('  `open <title|author>` to jump to one.', 'line--faint'));
+  ctx.out(line('  `open <title|slug|@author>` to jump to one — or click a row.', 'line--faint'));
 };
 
+/** Normalise a query: lowercase, strip a leading @, collapse separators. */
+function normQuery(s: string): string {
+  return s.toLowerCase().replace(/^@/, '').replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/** Rank projects against a free-form query — exact slug/title beats author beats substring. */
+function resolveProjects(query: string): Project[] {
+  const q = normQuery(query);
+  if (!q) return [];
+  const scored: [Project, number][] = [];
+  for (const p of PROJECTS) {
+    const title = normQuery(p.title);
+    const slug = normQuery(p.slug);
+    const author = normQuery(p.author);
+    let score = 0;
+    if (slug === q || title === q) score = 100;
+    else if (author === q) score = 90;
+    else if (title.startsWith(q) || slug.startsWith(q)) score = 70;
+    else if (title.includes(q) || slug.includes(q)) score = 50;
+    else if (author.includes(q)) score = 40;
+    else if (p.stack.some((s) => normQuery(s).includes(q))) score = 20;
+    else if (p.tags.some((t) => normQuery(t).includes(q))) score = 15;
+    if (score) scored.push([p, score]);
+  }
+  return scored.sort((a, b) => b[1] - a[1]).map(([p]) => p);
+}
+
 const open: Command['run'] = (args, ctx) => {
-  const q = args.join(' ').toLowerCase();
-  if (!q) {
+  const raw = args.join(' ');
+  if (!raw) {
     ctx.out(line('open: which project?  try `showcase`', 'line--warn'));
     return;
   }
-  const p = PROJECTS.find(
-    (x) => x.slug === q || x.title.toLowerCase() === q || x.author.toLowerCase() === q || x.title.toLowerCase().includes(q),
-  );
-  if (!p) {
-    ctx.out(line(`open: no project matching "${args.join(' ')}"`, 'line--err'));
+  const matches = resolveProjects(raw);
+  if (!matches.length) {
+    ctx.out(line(`open: nothing matching "${raw}"`, 'line--err'));
     ctx.out(line('  try `showcase` for the list.', 'line--faint'));
     return;
   }
+  // an ambiguous query (e.g. an author with several projects) -> let them choose
+  const exact = normQuery(matches[0].title) === normQuery(raw) || normQuery(matches[0].slug) === normQuery(raw);
+  if (matches.length > 1 && !exact) {
+    ctx.out(blank());
+    ctx.out(line(`  ${matches.length} projects match "${raw}" — pick one:`, 'line--warn'));
+    ctx.out(blank());
+    ctx.out(table<Project>(matches, [
+      { head: 'project', cell: (p) => p.title },
+      { head: 'by', cell: (p) => `@${p.author}`, muted: true },
+      { head: 'stack', cell: (p) => p.stack.slice(0, 2).join(' · '), muted: true },
+      { head: 'open', cell: (p) => cmdLink('open →', `open ${p.slug}`) },
+    ]));
+    return;
+  }
+  const p = matches[0];
   ctx.out(blank());
   ctx.out(card(p.title, `by @${p.author}  ·  ${p.pwr} pwr  ·  ${p.votes} vote${p.votes === 1 ? '' : 's'}  ·  shipped ${p.shipped}`, p.oneLiner));
   ctx.out(kv([['stack', p.stack.join(', ')]]));
@@ -275,8 +315,17 @@ const open: Command['run'] = (args, ctx) => {
   ctx.out(tags);
   const lk = document.createElement('div');
   lk.className = 'line';
-  lk.append(link('open on krackeddevs.com', `${COMMUNITY.showcase}`));
+  lk.append(link('open on krackeddevs.com', COMMUNITY.showcase));
   ctx.out(lk);
+  // continuity: the obvious next steps, one click away
+  const others = PROJECTS.filter((x) => x.author === p.author && x.slug !== p.slug);
+  ctx.out(blank());
+  ctx.out(cmdRow('  next:', [
+    [`whois @${p.author}`, `whois ${p.author}`],
+    ...others.slice(0, 2).map((o) => [o.title, `open ${o.slug}`] as [string, string]),
+    ['showcase', 'showcase'],
+  ]));
+  ctx.out(blank());
 };
 
 const stats: Command['run'] = (_a, ctx) => {

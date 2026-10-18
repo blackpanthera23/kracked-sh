@@ -224,11 +224,30 @@ export class Graph {
       ctx.fill();
 
       if (hot) {
+        // pulse: a crisp ring plus an expanding echo, driven by the anim clock
+        const beat = (this.t * 1.6 + n.pulse) % 1;
         ctx.beginPath();
         ctx.arc(x, y, n.r + 7, 0, Math.PI * 2);
-        ctx.strokeStyle = `hsla(${hue}, 90%, 68%, 0.5)`;
-        ctx.lineWidth = 1.2;
+        ctx.strokeStyle = `hsla(${hue}, 90%, 68%, 0.75)`;
+        ctx.lineWidth = 1.4;
         ctx.stroke();
+
+        const echoR = n.r + 8 + beat * 20;
+        ctx.beginPath();
+        ctx.arc(x, y, echoR, 0, Math.PI * 2);
+        ctx.strokeStyle = `hsla(${hue}, 90%, 70%, ${0.45 * (1 - beat)})`;
+        ctx.lineWidth = 1.1;
+        ctx.stroke();
+
+        ctx.save();
+        ctx.shadowColor = `hsla(${hue}, 90%, 65%, 0.85)`;
+        ctx.shadowBlur = 16;
+        ctx.beginPath();
+        ctx.arc(x, y, n.r, 0, Math.PI * 2);
+        ctx.strokeStyle = `hsla(${hue}, 95%, 75%, 0.9)`;
+        ctx.lineWidth = 1.6;
+        ctx.stroke();
+        ctx.restore();
       }
 
       // labels: the hovered node always, plus the top few by power

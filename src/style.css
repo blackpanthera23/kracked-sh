@@ -493,20 +493,23 @@ a:hover { color: var(--green); border-bottom-color: var(--green); }
 }
 .city--on { opacity: 1; pointer-events: auto; }
 
-/* the map is one <pre>; it must not wrap or the streets break */
+/* the map is one <pre>; it must not wrap or the streets break.
+   It has to fit the frame in both axes: 80 monospace columns across, 43 rows
+   down, inside the HUD band above and the legend below. The frame pads for
+   those, and the font tracks whichever axis is tighter — vw for a wide window,
+   vh for a short one. */
 .city__frame {
   display: grid;
   place-items: center;
   width: 100%;
   height: 100%;
-  padding: 64px 24px 56px;
+  padding: 132px 24px 64px;
   overflow: hidden;
 }
 .city__map {
   margin: 0;
   font-family: var(--font-mono);
-  /* 80 columns of monospace must fit the frame, so scale to the viewport */
-  font-size: clamp(6px, 1.22vw, 19px);
+  font-size: clamp(5px, min(1.22vw, 1.72vh), 19px);
   line-height: 1.02;
   letter-spacing: 0;
   white-space: pre;

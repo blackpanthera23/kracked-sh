@@ -12,6 +12,15 @@ and their power levels.
 `explore` opens the other world: a top-down ASCII city where every project is a
 building you walk up to. `WASD` / arrows move, `Enter` goes inside, `Esc` leaves.
 
+`sky` opens the third: the showcase as a night sky where **rarity is magnitude**.
+535 projects are stars, one per `SHOWCASE` record, placed from a hash of the
+author's handle so each builder's work lands as its own constellation. Brightness
+and size come from `rarity`, so the rarest project in the community is literally
+the brightest thing on screen — readable from across the map without reading a
+word. Colour comes from the project's first stack tag, so a run of TypeScript
+projects reads as one blue field. Drag to pan, scroll to zoom, click a star to
+open that project, `Esc` to leave.
+
 ## Why a shell
 
 Kracked Devs is a community *of developers*. A terminal signals the audience
@@ -29,6 +38,7 @@ interaction the visitor performs rather than scrolls past:
 | values | `cat manifesto` |
 | signup CTA | `join` |
 | "community map" | `attach` → canvas topology |
+| portfolio, again | `sky` → the showcase sorted by rarity |
 
 ## Commands
 
@@ -44,6 +54,7 @@ open <project>          open one project
 cat about|manifesto     read a document
 attach                  enter the community topology layer
 explore [project]       walk the city; each building is a project
+sky [project]           the projects as stars; rarity is brightness
 join                    how to become a builder
 stats                   community numbers + power distribution
 clear                   clear the screen
@@ -70,6 +81,10 @@ Shell features: **Tab** completion (commands and arguments), **↑/↓** history
 The city: **WASD** or arrows to walk, hold a key to keep walking, **Enter** to go
 into the building you are standing at, **Esc** to leave. 420 projects are placed
 as buildings; the rest stay reachable through `showcase`.
+
+The sky: **drag** to pan, **scroll** or **+/−** to zoom, **0** to reset, pinch on
+a touchscreen, **click** a star to open that project, **Esc** to leave. All 535
+projects are placed.
 
 If a visitor types nothing for 9 seconds, a demo sequence types itself out so
 the page always demonstrates itself.
@@ -100,10 +115,12 @@ src/
     commands.ts       command registry, banner, boot sequence
     graph.ts          canvas topology layer
     city.ts           walkable ASCII city, one building per project
+    sky.ts            the showcase as a night sky; rarity is magnitude
     progress.ts       the run: xp, elements, save/load
 scripts/
   sync-showcase.mjs   regenerate src/showcase.ts from the live site
   test-city.py        drive the city in a real browser and assert it works
+  test-sky.py         drive the sky in a real browser and assert it works
 ```
 
 ## Run
@@ -132,6 +149,20 @@ npm run test:city          # needs `websockets`
 It opens the city, walks with WASD and the arrows, holds a key, walks into a
 wall, walks to a project, taps a building to reach its door, opens it, and fails
 non-zero on any console error. Screenshot of the final state: `/tmp/city-shot.png`.
+
+### Testing the sky
+
+The sky is an instrument, so it is tested by driving it. Same Chrome and server
+as above, then:
+
+```bash
+npm run test:sky           # needs `websockets`
+```
+
+It opens the sky, checks one star per project and that the brightest star is the
+rarest project (rarity 17), hovers a star, pans, zooms by wheel, keyboard and
+two-finger pinch, checks the clamp, flies to a project, opens it, leaves with
+`Esc`, and fails non-zero on any console error.
 
 ### Refreshing the showcase
 

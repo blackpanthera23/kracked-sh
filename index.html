@@ -91,6 +91,20 @@
         <span class="city__legend-note">each building is a shipped project</span>
       </div>
     </div>
+
+    <!-- project sky for `sky`: rarity is magnitude -->
+    <div class="sky" id="sky" aria-hidden="true">
+      <canvas id="skyCanvas"></canvas>
+      <div class="sky__hud">
+        <span class="sky__label">PROJECT SKY</span>
+        <span class="sky__hint">drag to pan · <span class="sky__hint-desktop">scroll to zoom · click a star to open</span><span class="sky__hint-touch">pinch to zoom · tap a star to open</span> · <kbd>Esc</kbd> to leave</span>
+        <div class="sky__where" id="skyWhere"></div>
+      </div>
+      <div class="sky__legend">
+        <span><i class="sw sw--star"></i>a shipped project</span>
+        <span class="sky__legend-note" id="skyNote">brightness = rarity</span>
+      </div>
+    </div>
   </div>
 
   <p id="hint" class="sr-only">Type <code>help</code> to list commands. Use Tab to complete, up and down arrows for history.</p>

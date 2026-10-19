@@ -21,6 +21,8 @@ export interface Ctx {
   attach: (on: boolean) => void;
   /** Enter the walkable ASCII city, optionally walking to a project. */
   explore: (id?: string) => void;
+  /** Enter the project sky, where rarity is magnitude, optionally focusing one. */
+  sky: (id?: string) => void;
   /** Clear the scrollback. */
   clear: () => void;
   /** Submit a command as if typed. */

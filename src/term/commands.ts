@@ -426,11 +426,31 @@ const explore: Command['run'] = async (args, ctx) => {
   ctx.status('walking', false);
 };
 
+/** Open the project sky. With an argument, fly to that project's star. */
+const sky: Command['run'] = async (args, ctx) => {
+  const want = args.join(' ').trim();
+  if (!want) {
+    ctx.out(line('  charting the project sky…', 'line--dim'));
+    await ctx.sleep(260);
+    ctx.sky();
+    ctx.status('drifting', false);
+    return;
+  }
+  const hits = resolveProjects(want);
+  if (hits.length === 0) {
+    ctx.out(line(`sky: nothing matches "${want}".`, 'line--warn'));
+    return;
+  }
+  const target = hits[0];
+  ctx.out(line(`  flying to ${target.title}…`, 'line--dim'));
+  await ctx.sleep(260);
+  ctx.sky(target.id);
+  ctx.status('drifting', false);
+};
+
 const join: Command['run'] = async (_a, ctx) => {
   ctx.out(blank());
   ctx.out(line('  kracked.sh — joining the community', 'line--info'));
-  ctx.out(blank());
-  ctx.out(line('  You need an account to ship. Two ways in:', 'line--dim'));
   ctx.out(blank());
   const l1 = document.createElement('div');
   l1.className = 'line';
@@ -559,6 +579,8 @@ const start: Command['run'] = (_a, ctx) => {
   ctx.out(blank());
   ctx.out(cmdRow('  or skip ahead:', [
     ['see the topology', 'attach'],
+    ['walk the city', 'explore'],
+    ['chart the sky', 'sky'],
     ['your player card', 'player'],
     ['read the manifesto', 'manifesto'],
   ]));
@@ -884,6 +906,7 @@ export const REGISTRY: Command[] = [
   { name: 'manifesto', args: '', group: 'navigate', summary: 'the six rules builders ship by', run: (a, ctx) => cat(['manifesto'], ctx) },
   { name: 'attach',  args: '', group: 'navigate', summary: 'enter the community topology layer', run: attach },
   { name: 'explore', args: '[project]', group: 'navigate', summary: 'walk the city; each building is a project', run: explore },
+  { name: 'sky',     args: '[project]', group: 'navigate', summary: 'the projects as stars; rarity is brightness', run: sky },
   { name: 'join',    args: '', group: 'navigate', summary: 'how to become a builder', run: join },
   { name: 'stats',   args: '', group: 'system', summary: 'community numbers', run: stats },
   { name: 'clear',   args: '', group: 'system', summary: 'clear the screen', run: clear },

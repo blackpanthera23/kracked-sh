@@ -561,3 +561,70 @@ a:hover { color: var(--green); border-bottom-color: var(--green); }
 .city__legend .sw--door { background: var(--amber); color: var(--amber); }
 .city__legend .sw--wall { background: var(--border-hi); color: var(--border-hi); }
 .city__legend-note { color: var(--border-hi); }
+
+/* ---------------------------------------------------------------- sky
+   Rarity is magnitude: the sky is the showcase, sorted by how much other
+   people built on top of each project. Deep space behind it, so the glow
+   has something to sit on. */
+.sky {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 420ms ease;
+  background: #04060b;
+  overflow: hidden;
+}
+.sky--on { opacity: 1; pointer-events: auto; }
+
+#skyCanvas { width: 100%; height: 100%; display: block; touch-action: none; }
+
+.sky__hud {
+  position: absolute;
+  inset: 22px 22px auto;
+  display: grid;
+  gap: 4px;
+  pointer-events: none;
+}
+.sky__label { color: var(--cyan); font-size: var(--fs-xs); letter-spacing: 0.16em; }
+.sky__hint  { color: var(--fg-faint); font-size: var(--fs-xs); }
+.sky__where {
+  margin-top: 10px;
+  color: var(--fg);
+  font-size: var(--fs-sm);
+  min-height: 3.2em;
+  max-width: 620px;
+}
+.sky__where b { color: var(--fg); font-weight: 500; }
+.sky__where .sky__meta { color: var(--fg-dim); }
+.sky__where .sky__rarity { color: var(--cyan); }
+.sky__where .sky__cta { color: var(--fg-dim); }
+
+.sky__legend {
+  position: absolute;
+  left: 44px;
+  bottom: 26px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  font-size: var(--fs-xs);
+  color: var(--fg-faint);
+  pointer-events: none;
+}
+.sky__legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sky__legend .sw {
+  width: 8px; height: 8px; border-radius: 50%;
+  display: inline-block;
+  background: var(--cyan);
+  color: var(--cyan);
+  box-shadow: 0 0 8px currentColor;
+}
+.sky__legend-note { color: var(--border-hi); }
+
+/* On a phone there is no hover or scroll wheel, so the hint names touch. */
+.sky__hint-touch { display: none; }
+@media (hover: none), (pointer: coarse) {
+  .sky__hint-desktop { display: none; }
+  .sky__hint-touch { display: inline; }
+}

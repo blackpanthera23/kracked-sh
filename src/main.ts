@@ -11,6 +11,7 @@ import { REGISTRY, COMMAND_NAMES, banner, boot } from './term/commands';
 import { tokenize, History, type Ctx } from './term/shell';
 import { Graph } from './term/graph';
 import { City, type Building } from './term/city';
+import { Sky } from './term/sky';
 import { line, blank, echo, raw, cmdRow } from './term/output';
 import { MEMBERS } from './data';
 import { countCmd, setProjectTable, setDemoMode } from './term/progress';
@@ -34,9 +35,14 @@ const tipEl    = document.getElementById('graphTip')!;
 const cityEl   = document.getElementById('city')!;
 const cityMap  = document.getElementById('cityMap')!;
 const cityWhere = document.getElementById('cityWhere')!;
+const skyEl     = document.getElementById('sky')!;
+const skyCanvas = document.getElementById('skyCanvas') as HTMLCanvasElement;
+const skyWhere  = document.getElementById('skyWhere')!;
+const skyNote   = document.getElementById('skyNote')!;
 const history = new History();
 let graph: Graph | null = null;
 let city: City | null = null;
+let sky: Sky | null = null;
 /** Set while the city is entering a project, so the shell does not double-report. */
 let cityEntering = false;
 function setBusy(on: boolean): void {
@@ -146,6 +152,37 @@ const ctx: Ctx = {
     if (id) city.walkTo(id);
     // exposed so the world can be inspected from the console / tests, like __graph
     (window as unknown as Record<string, unknown>).__city = city;
+  },
+  sky(id) {
+    skyEl.classList.add('sky--on');
+    termEl.classList.add('term--detached');
+    sky ??= new Sky(
+      skyCanvas,
+      (p) => {
+        if (!p) {
+          const s = sky!.stats();
+          skyWhere.innerHTML =
+            `<span class="sky__cta">${s.stars} projects · ${s.authors} builders · ` +
+            `drag to pan, scroll to zoom</span>`;
+          return;
+        }
+        skyWhere.innerHTML =
+          `<b>${escapeHtml(p.title)}</b> <span class="sky__meta">by @${escapeHtml(p.author)}</span> ` +
+          `<span class="sky__rarity">rarity ${p.rarity}</span><br>` +
+          `<span class="sky__cta">click to open it</span>`;
+      },
+      (p) => {
+        // leave the sky and run the normal card, so there is one source of truth
+        skyExit();
+        void submit(`open ${p.id}`);
+      },
+    );
+    sky.start();
+    const stats = sky.stats();
+    skyNote.textContent =
+      `brightness = rarity · brightest: ${stats.brightest ? '@' + stats.brightest.author : 'none'}`;
+    if (id) sky.focus(id);
+    (window as unknown as Record<string, unknown>).__sky = sky;
   },
   clear() {
     screen.replaceChildren();
@@ -320,6 +357,31 @@ function cityExit(why?: string): void {
   cityEl.classList.remove('city--on');
   termEl.classList.remove('term--detached');
   if (why) append(line(`  left the city (${why}).`, 'line--dim'));
+  ctx.status('ready');
+  requestAnimationFrame(() => input.focus());
+}
+
+document.addEventListener('keydown', (e) => {
+  if (!sky?.isRunning) return;
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    skyExit('Esc');
+  }
+  // `+`/`-` zoom without a mouse, so the sky is usable on a keyboard
+  if (e.key === '+' || e.key === '=') { e.preventDefault(); sky.zoomBy(1.35); }
+  if (e.key === '-' || e.key === '_') { e.preventDefault(); sky.zoomBy(1 / 1.35); }
+  if (e.key === '0') { e.preventDefault(); sky.reset(); }
+  if (e.key === 'Enter') { e.preventDefault(); sky.openSelected(); }
+});
+
+/* Leaving the sky is also a click on a star, which main.ts already routes
+   through onPick, so this only has to handle the explicit exits. */
+function skyExit(why?: string): void {
+  if (!sky?.isRunning) return;
+  sky.stop();
+  skyEl.classList.remove('sky--on');
+  termEl.classList.remove('term--detached');
+  if (why) append(line(`  left the sky (${why}).`, 'line--dim'));
   ctx.status('ready');
   requestAnimationFrame(() => input.focus());
 }

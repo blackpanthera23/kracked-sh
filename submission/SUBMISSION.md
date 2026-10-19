@@ -12,13 +12,74 @@ https://blackpanthera23.github.io/kracked-sh/
 https://github.com/blackpanthera23/kracked-sh
 
 **Title**
-kracked.sh — the community as a shell
+kracked.sh — a city that teaches the community by walking it
 
 **One-liner**
-Kracked Devs reimagined as a real terminal: type `help`, then `attach`, and the
-shell dissolves into a live map of who builds with whom.
+Kracked Devs as a small isometric city: walk the dinosaur through real KD
+destinations, collect supplies, put the fires out — or skip all of it and just
+browse 535 shipped projects.
 
 **Description (markdown)**
+
+```markdown
+Kracked Devs is a community *of developers* — so the landing page is a place
+you walk, not a page you scroll.
+
+## A briefing, not a prompt
+
+You arrive at a small terminal briefing: **Start exploring**, **Browse without
+playing**, **Use terminal**. Nothing is hidden behind a game: every KD
+destination works on the first click.
+
+## Kracked City
+
+**Start exploring** opens one isometric Canvas 2D world joining three districts.
+
+| District | Landmarks (live KD services) |
+|---|---|
+| Community | KD Square, Events & Hackathons, Members, Showcase, Bounties, KD Raid |
+| School | AI Classes, Builders Sandbox, Learning portal, The Cave*, Hermes Malaysia* |
+| Labs | Enroll Labs, My Lab, JomQR, Kuntum & Embun |
+
+*labelled coming soon, with no invented link.*
+
+Walk with WASD/arrows or tap the ground. Each district holds three water cells;
+pick all three up and the dinosaur's hose can finally put that district's fire
+out. Landmarks open their destination, so the taxonomy — community, school,
+labs — is taught by the map instead of a menu.
+
+## The same work, browsable
+
+**Showcase** opens a real browser over the generated snapshot: search 535
+projects by title, builder or stack, filter to one builder, load them all, and
+follow real covers, live sites and repos. **Browse without playing** lists all
+15 destinations as a directory.
+
+## Craft
+
+- **Zero runtime dependencies.** Production `dependencies` is empty.
+- Hand-written CSS on a phosphor palette; the city is Canvas 2D with cached
+  buildings and depth ordering — no WebGL, no engine, no asset downloads.
+- City points are **local to your browser** and never pretend to be KD XP.
+- Reduced motion keeps a static city: deliberate play still works, idle
+  animation and camera easing do not.
+- Search and command inputs keep Space, A/D and the arrow keys; gameplay only
+  reads keys inside its focused canvas.
+- Live at https://blackpanthera23.github.io/kracked-sh/ ·
+  code at https://github.com/blackpanthera23/kracked-sh
+```
+
+**Classification**
+- Staging level: `Launched`
+- Event identifier: `Bounty — KD-COMM-01` (confirm against the form's event list)
+
+**Tech stack** (max 5)
+`Vite`, `TypeScript`, `Canvas 2D`, `CSS`, `GitHub Pages`
+
+<!-- The terminal-era submission below is kept for history; the form fields
+     above are the current build. -->
+
+## Earlier build — the terminal-era submission
 
 ```markdown
 Kracked Devs is a community *of developers*, so the landing page is a shell.

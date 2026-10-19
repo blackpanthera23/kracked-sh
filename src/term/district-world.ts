@@ -1,4 +1,5 @@
 import '../district-world.css';
+import type { Audio } from './audio';
 
 export interface Destination {
   id: string;
@@ -27,6 +28,8 @@ type Options = {
   destinations: readonly Destination[];
   onExit: () => void;
   onShowcase: () => void;
+  /** Optional chiptune; absent means the city runs silent. */
+  audio?: Audio;
 };
 
 const TILE_X = 28;
@@ -204,6 +207,7 @@ export class DistrictWorld {
     this.suspended = on;
     if (on) {
       this.clearInput();
+      this.options.audio?.suspend();
       if (this.running) this.setPaused(true, false);
       this.stop();
     } else {
@@ -575,7 +579,7 @@ export class DistrictWorld {
         previous[next] = current; queue[end++] = next;
       }
     }
-    if (previous[target] < 0) { this.announce('That route is blocked. Try the central promenade.'); return; }
+    if (previous[target] < 0) { this.options.audio?.cue('blocked'); this.announce('That route is blocked. Try the central promenade.'); return; }
     const path: Point[] = [];
     for (let node = target; node !== start; node = previous[node]) path.push({ x: node % COLS, y: Math.floor(node / COLS) });
     path.push({ x: start % COLS, y: Math.floor(start / COLS) });
@@ -716,6 +720,7 @@ export class DistrictWorld {
       if (!cell.collected && distance(this.player, cell) < CELL_REACH) {
         cell.collected = true;
         const count = district.cells.filter(c => c.collected).length;
+        this.options.audio?.cue('collect');
         this.announce(count === 3 ? `${district.title}: hose ready. Walk near the fire and hold Space or the water button.` : `${district.title}: water cell ${count} of 3 collected. Ten local city points.`);
         this.save();
       }
@@ -723,9 +728,11 @@ export class DistrictWorld {
     const district = this.currentDistrict();
     this.spraying = this.sprayHeld && !district.resolved && district.cells.every(c => c.collected) && distance(this.player, district.fire) <= FIRE_REACH;
     if (this.spraying) {
+      if (district.progress === 0) this.options.audio?.cue('hose');
       district.progress = Math.min(1, district.progress + dt / HOLD_SECONDS);
       if (district.progress >= 1) {
         district.resolved = true; this.spraying = false;
+        this.options.audio?.cue('restored');
         this.save();
         this.announce(this.districts.every(d => d.resolved) ? 'All three districts restored! 240 local city points. Explore any destination, or replay the city.' : `${district.title} restored. Lights on! Fifty local city points. Choose the next district to keep exploring.`);
       }

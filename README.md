@@ -136,6 +136,12 @@ switching to browsing or entering Kracked City cancels it.
 The city uses Canvas 2D with cached terrain and building sprites, depth ordering
 and capped device pixel ratio; no WebGL, 3D model downloads or physics engine.
 
+Sound is **generated, never shipped**: `src/term/audio.ts` runs a Web Audio
+look-ahead scheduler over a minor-pentatonic loop, plus short cues for water
+cells, hose, restoration and blocked routes. It is off until the visitor presses
+**Music**, the choice persists in `kracked-music-v1`, and it suspends when the
+tab is hidden, the city is detached or the page unloads.
+
 ## Layout of the source
 
 ```
@@ -155,6 +161,7 @@ src/
     city.ts           walkable ASCII city, one building per project
     sky.ts            the showcase as a night sky; rarity is magnitude
     district-world.ts isometric city, navigation, supplies, fire and local progress
+    audio.ts          procedural chiptune loop and event cues (Web Audio)
     progress.ts       the run: xp, elements, save/load
 scripts/
   sync-showcase.mjs   regenerate src/showcase.ts from the live site

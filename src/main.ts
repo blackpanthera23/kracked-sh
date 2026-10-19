@@ -12,6 +12,7 @@ import { Graph } from './term/graph';
 import { City, type Building } from './term/city';
 import { Sky } from './term/sky';
 import { DistrictWorld } from './term/district-world';
+import { Audio } from './term/audio';
 import { DESTINATIONS } from './destinations';
 import { line, blank, echo, raw, cmdRow } from './term/output';
 import { MEMBERS } from './data';
@@ -640,9 +641,11 @@ function scheduleNudge(): void {
 
 let worldReturnFocus: HTMLElement | null = null;
 let worldReturnView: View = 'welcome';
+const audio = new Audio();
 const world = new DistrictWorld({
   root: worldEl,
   destinations: DESTINATIONS,
+  audio,
   onExit() {
     termEl.hidden = false;
     termEl.inert = termEl.classList.contains('term--detached');
@@ -665,6 +668,7 @@ function enterWorld(): void {
   if (world.active || termEl.classList.contains('term--detached')) return;
   cancelDemo();
   clearTimeout(idleTimer);
+  audio.resume();
   worldReturnView = view;
   worldReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   termEl.inert = true;
@@ -752,6 +756,28 @@ for (const button of document.querySelectorAll<HTMLButtonElement>('[data-go]')) 
 }
 document.getElementById('welcomeExplore')!.addEventListener('click', enterWorld);
 document.getElementById('exploreCity')!.addEventListener('click', enterWorld);
+
+/* Music is opt-in: the button is the only thing that ever starts it. */
+const musicButton = document.getElementById('welcomeMusic') as HTMLButtonElement;
+function paintMusic(): void {
+  const on = audio.enabled;
+  musicButton.setAttribute('aria-pressed', String(on));
+  musicButton.classList.toggle('btn--primary', on);
+  musicButton.innerHTML = '';
+  const note = document.createElement('span');
+  note.setAttribute('aria-hidden', 'true');
+  note.textContent = '♪';
+  musicButton.append(note, document.createTextNode(on ? ' Music on' : ' Music off'));
+}
+musicButton.addEventListener('click', () => { audio.toggle(); paintMusic(); });
+paintMusic();
+
+// Never play into a hidden tab, and pick the loop back up when it returns.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) audio.suspend();
+  else if (view !== 'terminal') audio.resume();
+});
+window.addEventListener('pagehide', () => audio.suspend());
 renderDirectory();
 for (const n of document.querySelectorAll<HTMLElement>('[data-stat]')) {
   if (n.dataset.stat === 'projects') n.textContent = String(SHOWCASE.length);

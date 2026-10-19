@@ -1,13 +1,21 @@
 # kracked.sh
 
-A terminal-first reimagination of the Kracked Devs community page, built for the
+A terminal-framed reimagination of the Kracked Devs community page, built for the
 open creative bounty (deadline 18 Oct 2026).
 
-Instead of a conventional landing page, the whole site **is a shell**. Visitors
-land at a prompt, a boot sequence runs, and they explore the community by typing
-commands. The signature moment is `attach`: the terminal collapses and a live
-community topology takes over — a canvas graph of builders, their collaborations
-and their power levels.
+Visitors land on a compact mission briefing, not a command prompt. **Start
+exploring** opens Kracked City: a lightweight isometric world connecting
+Community, School and Labs. **Browse without playing** opens the same 15 KD
+destinations as a directory; nothing is locked behind gameplay. The Cave and
+Hermes Malaysia are labelled Coming soon, without fake links.
+
+Showcase opens the existing project browser: search by title, builder or stack,
+load all 535 projects, and follow real screenshots, source and live-site links.
+
+**Use terminal** opens the optional shell. **Back to browse** restores the current
+search, builder filter, loaded cards and scroll position; terminal output and
+history also survive view changes. No boot sequence or mobile keyboard interrupts
+the welcome. In the shell, `attach` opens a canvas community topology.
 
 `explore` opens the other world: a top-down ASCII city where every project is a
 building you walk up to. `WASD` / arrows move, `Enter` goes inside, `Esc` leaves.
@@ -20,6 +28,12 @@ the brightest thing on screen — readable from across the map without reading a
 word. Colour comes from the project's first stack tag, so a run of TypeScript
 projects reads as one blue field. Drag to pan, scroll to zoom, click a star to
 open that project, `Esc` to leave.
+
+The dinosaur walks through KD's three districts, collecting three water cells
+in each before its hose can extinguish that district's fire. Restored districts
+light up; their landmarks lead to the corresponding KD service. The city is a
+fictional local mission, not a live outage display or KD Raid. City points and
+progress are local to this browser and never count as real KD XP.
 
 ## Why a shell
 
@@ -86,8 +100,29 @@ The sky: **drag** to pan, **scroll** or **+/−** to zoom, **0** to reset, pinch
 a touchscreen, **click** a star to open that project, **Esc** to leave. All 535
 projects are placed.
 
-If a visitor types nothing for 9 seconds, a demo sequence types itself out so
-the page always demonstrates itself.
+Kracked City: **Start exploring** from the briefing, or **Explore city** from
+the frame footer. The frame becomes a compact mission HUD over the full scene.
+
+- **WASD / arrows** move; **tap or click the ground** follows a walkable route.
+  Community, School and Labs buttons walk to that district without teleporting.
+- Collect **three distinct water cells per district**. Each pickup awards 10
+  local city points once. Before all three, the hose cannot extinguish its fire.
+- Near the fire, hold **Space** or the **water** button for 2.4 seconds total.
+  Partial spray progress survives release; an unlocked hose cannot run dry.
+  Restoration awards 50 local points. All districts restored totals 240 points.
+- Click a building or press **Enter** nearby to inspect its destination. The
+  **Destinations** directory remains available anywhere, before collecting.
+- **P / Pause** pauses; **Escape** closes a destination panel first, then exits
+  the city and restores focus to the prior view. **Back to browse** also exits.
+- **Replay city** resets the mission after all three districts are restored.
+  Otherwise collected cells and restored districts survive leaving and reloads.
+
+The game clears held input on blur, hidden tabs, cancelled touches and dialogs.
+Reduced motion disables idle animation and camera easing, but deliberate play
+still works. Search and command inputs never receive gameplay handlers.
+
+In terminal mode only, 14 seconds of inactivity starts a guided demo. Typing,
+switching to browsing or entering Kracked City cancels it.
 
 ## Stack
 
@@ -98,16 +133,19 @@ the page always demonstrates itself.
   at load, slow orbital drift, hover raycast, status-coloured nodes
 - **GitHub Pages** deploy workflow
 
-Production build is ~205 KB JS + ~10 KB CSS (≈74 KB + 3 KB gzipped), most of
-which is the generated showcase snapshot.
+The city uses Canvas 2D with cached terrain and building sprites, depth ordering
+and capped device pixel ratio; no WebGL, 3D model downloads or physics engine.
 
 ## Layout of the source
 
 ```
-index.html            terminal chrome, prompt, graph layer
+index.html            briefing, directory, browser and terminal frame, world roots
 src/
-  main.ts             wiring: boot, input, completion, history, idle demo
-  style.css           tokens + CRT + terminal + output primitives + graph
+  main.ts             view lifecycle, commands, focus, world integration
+  style.css           tokens + frame + browsing + terminal + legacy worlds
+  district-world.css  mission HUD, touch controls and destination dialog
+  destinations.ts     verified public KD navigation URLs and descriptions
+  browse.ts           project/browser filtering and pagination
   data.ts             community snapshot (members, bounties, projects, edges)
   term/
     shell.ts          tokenizer, history ring, Ctx contract
@@ -116,6 +154,7 @@ src/
     graph.ts          canvas topology layer
     city.ts           walkable ASCII city, one building per project
     sky.ts            the showcase as a night sky; rarity is magnitude
+    district-world.ts isometric city, navigation, supplies, fire and local progress
     progress.ts       the run: xp, elements, save/load
 scripts/
   sync-showcase.mjs   regenerate src/showcase.ts from the live site
@@ -174,6 +213,16 @@ Component payload and rewrites the file:
 npm run sync-showcase
 ```
 
+The same sync generates `src/showcase-images.ts` from the payload's `image_url`
+cover field. To refresh covers without changing project IDs, order or saves:
+
+```bash
+npm run sync-showcase:images
+```
+
+The current cover snapshot includes 535/535 projects. Images load lazily from
+their source URLs. Unknown image schema or zero usable covers aborts the sync.
+
 It refuses to write when the result looks wrong rather than shipping a short
 file: zero projects parsed, a drop of more than 20% against the previous
 snapshot, or fewer than half the projects carrying a link all abort with a
@@ -204,3 +253,9 @@ the ones in those files — no invented telemetry.
   `members`, `whois` and `showcase` as text.
 - The canvas animation stops entirely when detached (Ctrl+C) — no idle rAF loop
   burning battery behind the terminal.
+- The optional district world has a labelled keyboard canvas, live mission
+  announcements, native destination dialog and touch controls. Every destination
+  also exists in the non-game directory. Inactive controls cannot take focus.
+- City rendering stops while hidden or suspended behind another world;
+  reduced-motion idle is static. Cached scenery avoids rebuilding buildings
+  during movement.

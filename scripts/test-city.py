@@ -67,6 +67,7 @@ async def cdp():
     await ev("localStorage.clear()")
     await send("Page.navigate", {"url": URL})
     await asyncio.sleep(6)
+    await ev("document.getElementById('welcomeTerminal').click()")
 
     C = {}
     await run("explore", wait=2.0)

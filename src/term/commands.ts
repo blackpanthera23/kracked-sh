@@ -821,7 +821,11 @@ const load: Command['run'] = (args, ctx) => {
   const res = importSave(code);
   if (!res.ok) {
     ctx.out(line(`load: ${res.reason}`, 'line--err'));
-    ctx.out(line('  codes are `${payload}.${checksum}` — copy the whole thing.', 'line--faint'));
+    if (res.reason.includes('project list')) {
+      ctx.out(line('  the run itself is fine — the showcase it was earned against is not.', 'line--faint'));
+    } else {
+      ctx.out(line('  codes are `${payload}.${checksum}` — copy the whole thing.', 'line--faint'));
+    }
     return;
   }
   ctx.out(line(`  loaded — ${res.xp} xp restored.`, 'line--ok'));

@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit --strict --target ES2022 --module ESNext --moduleResolution bundler --lib ES2022,DOM,DOM.Iterable --types vite/client src/main.ts"
+    "typecheck": "tsc --noEmit --strict --target ES2022 --module ESNext --moduleResolution bundler --lib ES2022,DOM,DOM.Iterable --types vite/client src/main.ts",
+    "sync-showcase": "node scripts/sync-showcase.mjs",
+    "sync-showcase:dry": "node scripts/sync-showcase.mjs --dry-run"
   },
   "devDependencies": {
     "typescript": "^5",

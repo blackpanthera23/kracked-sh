@@ -46,6 +46,17 @@ clear                   clear the screen
 motd                    message of the day
 exit                     there is no exit
 
+the run
+scan [project]          inspect a project        +15 xp, first time only
+visit <project>         open its live site       +10 xp
+repo <project>          open its source          +10 xp
+follow <handle>         follow a builder         +10 xp
+player                  your card: xp, level, elements
+progress                your raw numbers
+save                    print a transferable save code
+load <code>             restore a run from a code
+reset                   wipe the run
+
 hidden: sudo, rm, vim, matrix, .join
 ```
 
@@ -64,7 +75,8 @@ the page always demonstrates itself.
   at load, slow orbital drift, hover raycast, status-coloured nodes
 - **GitHub Pages** deploy workflow
 
-Production build is ~30 KB JS + ~9 KB CSS (≈11 KB + 3 KB gzipped).
+Production build is ~205 KB JS + ~10 KB CSS (≈74 KB + 3 KB gzipped), most of
+which is the generated showcase snapshot.
 
 ## Layout of the source
 
@@ -79,16 +91,53 @@ src/
     output.ts         DOM output primitives (line, table, kv, pwrBar, tag…)
     commands.ts       command registry, banner, boot sequence
     graph.ts          canvas topology layer
+    progress.ts       the run: xp, elements, save/load
+scripts/
+  sync-showcase.mjs   regenerate src/showcase.ts from the live site
 ```
 
 ## Run
 
 ```bash
 npm install
-npm run dev       # http://localhost:5173
-npm run build     # → dist/
+npm run dev              # http://localhost:5173
+npm run build            # → dist/
 npm run preview
+
+npm run sync-showcase      # refresh src/showcase.ts from krackeddevs.com
+npm run sync-showcase:dry  # show what a sync would change, touch nothing
 ```
+
+### Refreshing the showcase
+
+`src/showcase.ts` is **generated** — do not hand-edit it. The site has no public
+API, so the sync script reads the project list out of the page's React Server
+Component payload and rewrites the file:
+
+```bash
+npm run sync-showcase
+```
+
+It refuses to write when the result looks wrong rather than shipping a short
+file: zero projects parsed, a drop of more than 20% against the previous
+snapshot, or fewer than half the projects carrying a link all abort with a
+non-zero exit. Run it after the community ships new projects, then `build`.
+
+Because the game stores a run as **indices** into that table, a rebuild changes
+what an index means. Save codes carry a fingerprint of the table they were
+minted against, and a code or stored run from a different snapshot is refused
+with an explanation instead of silently crediting the wrong projects.
+
+## Data
+
+`src/data.ts` is a static snapshot seeded from the live Kracked Devs community
+plus a small hand-written roster so the profiles and collaboration edges read as
+a real community rather than placeholder text.
+
+`src/showcase.ts` is generated from the live site by `npm run sync-showcase`:
+project id, title, author, the author's level, a one-liner, up to five stack
+tags, the live/git links and the site's own rarity score. Numbers on screen are
+the ones in those files — no invented telemetry.
 
 ## Accessibility & performance notes
 
@@ -99,10 +148,3 @@ npm run preview
   `members`, `whois` and `showcase` as text.
 - The canvas animation stops entirely when detached (Ctrl+C) — no idle rAF loop
   burning battery behind the terminal.
-
-## Data
-
-`src/data.ts` is a static snapshot seeded from the live Kracked Devs showcase
-(565 projects, 3,408 builders) plus a small hand-written roster so the profiles
-and collaboration edges read as a real community rather than placeholder text.
-Numbers on screen are the ones in that file — no invented telemetry.

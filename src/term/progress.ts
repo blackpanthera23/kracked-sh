@@ -24,7 +24,28 @@
  */
 
 const KEY = 'kracked.sh/progress/v1';
-const SAVE_VERSION = 1;
+const SAVE_VERSION = 2;
+
+/**
+ * Fingerprint of the project table a save was minted against.
+ *
+ * Scanned/visited/repoed are stored as indices into SHOWCASE, not ids, because
+ * 535 UUIDs would not fit in a pasteable code. That makes the meaning of an index
+ * depend on the exact table it was written against - and `npm run sync-showcase`
+ * rebuilds that table, so a code from an older snapshot would silently point at
+ * the wrong projects and credit the visitor for work they did not do.
+ *
+ * Stamping the table's length and a cheap hash lets `load` refuse such a code
+ * outright. Length alone catches a sync that adds or drops projects; the hash
+ * catches a reorder or an in-place edit that keeps the count.
+ */
+function tableFingerprint(ids: readonly string[]): string {
+  let h = 5381;
+  for (const id of ids) {
+    for (let i = 0; i < id.length; i++) h = ((h * 33) ^ id.charCodeAt(i)) >>> 0;
+  }
+  return `${ids.length}-${h.toString(36)}`;
+}
 
 export interface Progress {
   xp: number;
@@ -102,6 +123,7 @@ function packForDisk(): string {
     f: state.followed,
     d: state.lastDay,
     k: state.streak,
+    t: projectFingerprint,
   });
 }
 
@@ -110,7 +132,16 @@ function load(): Progress {
     const raw = localStorage.getItem(KEY);
     if (!raw) return empty();
     const parsed: unknown = JSON.parse(raw);
-    // accept the current compact form, and the earlier unpacked form
+    // A record written against a different project table cannot be trusted any
+    // more than a stale save code: its indices now name other projects. Start
+    // clean rather than credit the visitor for work they never did.
+    if (parsed && typeof parsed === 'object') {
+      const r = parsed as Record<string, unknown>;
+      if (typeof r.t === 'string' && r.t !== projectFingerprint) return empty();
+      // an index-based record with no fingerprint predates this guard
+      if (r.t === undefined && typeof r.s === 'string' && r.s) return empty();
+    }
+    // accept the current compact form, and the earlier unpacked id form
     return decodePacked(parsed) ?? coerce(parsed) ?? empty();
   } catch {
     return empty();
@@ -266,11 +297,14 @@ export function tierOf(pwr: number): 'LEGENDARY' | 'RARE' | 'COMMON' {
  */
 let projectIds: string[] = [];
 let projectIndex: Record<string, number> = {};
+/** Fingerprint of the installed table, computed once rather than per load. */
+let projectFingerprint = '0-0';
 
 export function setProjectTable(ids: string[]): void {
   projectIds = ids;
   projectIndex = {};
   ids.forEach((id, i) => { projectIndex[id] = i; });
+  projectFingerprint = tableFingerprint(ids);
   // the persisted run stores project indices, so it can only be decoded
   // once the table exists — install the table first, then hydrate
   hydrate();
@@ -347,6 +381,8 @@ interface Packed {
   f: string[];
   d: string;
   k: number;
+  /** fingerprint of the project table these indices were written against */
+  t: string;
 }
 
 export function exportSave(): string {
@@ -361,6 +397,7 @@ export function exportSave(): string {
     f: state.followed,
     d: state.lastDay,
     k: state.streak,
+    t: projectFingerprint,
   };
   const payload = JSON.stringify(packed);
   // a checksum makes a truncated paste fail loudly instead of silently
@@ -392,7 +429,29 @@ export function importSave(code: string): ImportResult {
   } catch {
     return { ok: false, reason: 'payload is not valid json' };
   }
-  const next = decodePacked(parsed) ?? legacyCoerce(parsed);
+
+  // Scanned/visited/repoed are indices into the project table. If the table has
+  // been rebuilt since this code was minted, those indices point somewhere else,
+  // so the run would silently claim the wrong projects. Refuse instead.
+  const fp = projectFingerprint;
+  if (parsed && typeof parsed === 'object' && 't' in parsed) {
+    const stamped = (parsed as { t?: unknown }).t;
+    if (typeof stamped !== 'string' || stamped !== fp) {
+      return {
+        ok: false,
+        reason:
+          'this code was written against a different project list — the showcase has changed since. Re-earn it with `save`.',
+      };
+    }
+  } else {
+    return {
+      ok: false,
+      reason:
+        'this code predates the current project list and its projects can no longer be identified. Re-earn it with `save`.',
+    };
+  }
+
+  const next = decodePacked(parsed);
   if (!next) return { ok: false, reason: 'payload is not a progress record' };
   state = next;
   persist();
@@ -404,6 +463,8 @@ function decodePacked(raw: unknown): Progress | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, unknown>;
   if (typeof r.v !== 'number' || typeof r.s !== 'string' || typeof r.x !== 'number') return null;
+  // a code from a newer build may carry fields this one cannot interpret
+  if (r.v > SAVE_VERSION) return null;
   const strArr = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
   return {
     xp: Number.isFinite(r.x) && r.x >= 0 ? r.x : 0,
@@ -417,12 +478,4 @@ function decodePacked(raw: unknown): Progress | null {
     streak: typeof r.k === 'number' && r.k >= 0 ? r.k : 0,
     sessionCmds: 0,
   };
-}
-
-/** Codes written before indices were introduced still load. */
-function legacyCoerce(raw: unknown): Progress | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const r = raw as Record<string, unknown>;
-  if (!Array.isArray(r.scanned)) return null;
-  return coerce(raw);
 }

@@ -95,6 +95,18 @@ export function pwrBar(pwr: number, blocks = 20): Node {
   return wrap;
 }
 
+/** Same meter, but driven by an explicit 0–100 percentage. */
+export function meter(percent: number, blocks = 20): Node {
+  const wrap = el('span', 'bar');
+  const pct = Math.max(0, Math.min(100, percent));
+  const filled = Math.round((pct / 100) * blocks);
+  for (let i = 0; i < blocks; i++) {
+    const b = el('i', i < filled ? (i >= blocks * 0.75 ? 'hot' : 'on') : '');
+    wrap.append(b);
+  }
+  return wrap;
+}
+
 export function tag(text: string, kind: '' | 'ok' | 'hot' = ''): Node {
   return el('span', `tag${kind ? ' tag--' + kind : ''}`, text);
 }

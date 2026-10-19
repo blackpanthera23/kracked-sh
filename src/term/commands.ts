@@ -2,10 +2,14 @@
  * Command registry. Each command is a small pure-ish function over Ctx.
  */
 
-import { COMMUNITY, MEMBERS, BOUNTIES, PROJECTS, Member, Project } from '../data';
+import { COMMUNITY, MEMBERS, BOUNTIES, type Member } from '../data';
 import { SHOWCASE, type ShowcaseProject } from '../showcase';
 import type { Command, Ctx } from './shell';
-import { line, blank, kv, table, pwrBar, tag, card as panel, link, raw, cmdLink, cmdRow } from './output';
+import { line, blank, kv, table, pwrBar, tag, card as panel, link, raw, cmdLink, cmdRow, meter } from './output';
+import {
+  award, snapshot, exportSave, importSave, reset as resetProgress,
+  levelOf, tierOf, xpForLevel, isPersistent, type Award,
+} from './progress';
 
 const pad = (s: string, n: number) => s + ' '.repeat(Math.max(0, n - s.length));
 
@@ -137,6 +141,14 @@ const whois: Command['run'] = (args, ctx) => {
     lk.append(link(l.label, l.href));
   });
   ctx.out(lk);
+  const a = award('guild', m.handle);
+  ctx.out(blank());
+  ctx.out(cmdRow('  next:', [
+    ['follow', `follow ${m.handle}`],
+    ['showcase', 'showcase'],
+    ['player', 'player'],
+  ]));
+  reportAward(a, ctx);
 };
 
 const bounties: Command['run'] = (_a, ctx) => {
@@ -192,6 +204,14 @@ async function printBounty(id: string, ctx: Ctx): Promise<void> {
   tags.className = 'line';
   b.tags.forEach((t) => tags.append(tag(t)));
   ctx.out(tags);
+  const a = award('bounty', b.id);
+  ctx.out(blank());
+  ctx.out(cmdRow('  next:', [
+    ['all bounties', 'bounties'],
+    ['showcase', 'showcase'],
+    ['player', 'player'],
+  ]));
+  reportAward(a, ctx);
 }
 
 async function about(ctx: Ctx): Promise<void> {
@@ -331,6 +351,7 @@ const open: Command['run'] = (args, ctx) => {
     return;
   }
   projectCard(matches[0], ctx);
+  reportAward(award('scan', matches[0].id), ctx);
 };
 
 /** Open the live site of a project in a new tab — the point of the showcase. */
@@ -348,6 +369,9 @@ const visit: Command['run'] = (args, ctx) => {
   }
   ctx.out(line(`  opening ${p.title} → ${p.site}`, 'line--ok'));
   window.open(p.site, '_blank', 'noopener,noreferrer');
+  const a = award('visit', p.id);
+  if (a.first) reportAward(a, ctx);
+  else alreadySeen(ctx, `${p.title} live site`);
 };
 
 const stats: Command['run'] = (_a, ctx) => {
@@ -502,13 +526,22 @@ const start: Command['run'] = (_a, ctx) => {
     ctx.out(row);
   }
   ctx.out(blank());
+  ctx.out(line('  ── how the game works ──', 'line--info'));
+  ctx.out(line('  every new project you inspect pays xp. xp buys levels and elements.', 'line--faint'));
+  ctx.out(line('  repeats pay nothing, so the only way up is to keep looking.', 'line--faint'));
+  ctx.out(cmdRow('  earn:', [
+    ['scan a project  +15', 'scan'],
+    ['open its live site  +10', 'showcase'],
+    ['read a bounty  +25', 'bounties'],
+  ]));
+  ctx.out(blank());
   ctx.out(cmdRow('  or skip ahead:', [
     ['see the topology', 'attach'],
-    ['open bounties', 'bounties'],
+    ['your player card', 'player'],
     ['read the manifesto', 'manifesto'],
   ]));
   ctx.out(blank());
-  ctx.out(line('  tip: `help` lists everything · `card` shows how power is scored', 'line--faint'));
+  ctx.out(line('  tip: `help` lists everything · `player` shows where your run stands', 'line--faint'));
   ctx.out(blank());
 };
 
@@ -526,26 +559,20 @@ const ELEMENTS: { element: string; glyph: string; label: string; has: (m: Member
   { element: 'WIND', glyph: '\u2248', label: 'Earns badges across the platform', has: (m) => m.pwr >= 60 },
 ];
 
-const player: Command['run'] = (args, ctx) => {
-  const q = normQuery(args.join(' ') || 'blackpanthera23');
-  const m = MEMBERS.find((x) => normQuery(x.handle) === q || normQuery(x.name) === q);
-  if (!m) {
-    ctx.out(line(`card: unknown builder "${args.join(' ')}"`, 'line--err'));
-    ctx.out(line('  try `members` for handles.', 'line--faint'));
-    return;
-  }
-  const pwr = (m.xp ?? 0) + 100 * m.shipped + 20 * (m.posts ?? 0) + 50 * (m.badges ?? 0);
-  const level = Math.min(Math.floor(Math.sqrt(pwr / 100)) + 1, 100);
-  const tier = pwr >= 800 ? 'LEGENDARY' : pwr >= 300 ? 'RARE' : 'COMMON';
+/** The four elements, scored off a record's own numbers. */
+function elementsFor(m: Member): { glyph: string; element: string; label: string; on: boolean }[] {
+  return ELEMENTS.map((e) => ({ glyph: e.glyph, element: e.element, label: e.label, on: e.has(m) }));
+}
 
+/** Anyone's static card — the lookup half of `player`. */
+function builderCard(m: Member, ctx: Ctx): void {
+  const pwr = (m.xp ?? 0) + 100 * m.shipped + 20 * (m.posts ?? 0) + 50 * (m.badges ?? 0);
+  const level = levelOf(pwr);
+  const tier = tierOf(pwr);
   ctx.out(blank());
   const head = document.createElement('div');
   head.className = 'line';
-  head.append(
-    cmdLink(`@${m.handle}`, `whois ${m.handle}`),
-    document.createTextNode('   '),
-    tag(tier, tier === 'COMMON' ? '' : 'hot'),
-  );
+  head.append(cmdLink(`@${m.handle}`, `whois ${m.handle}`), document.createTextNode('   '), tag(tier, tier === 'COMMON' ? '' : 'hot'));
   ctx.out(head);
   ctx.out(line(`  ${m.name} · ${m.role}`, 'line--faint'));
   ctx.out(blank());
@@ -558,22 +585,266 @@ const player: Command['run'] = (args, ctx) => {
   ]));
   ctx.out(blank());
   ctx.out(line('  elements', 'line--faint'));
-  for (const e of ELEMENTS) {
-    const on = e.has(m);
-    ctx.out(line(`   ${e.glyph} ${e.element.padEnd(6)} ${on ? e.label : '— locked'}`, on ? 'line--ok' : 'line--faint'));
+  for (const e of elementsFor(m)) {
+    ctx.out(line(`   ${e.glyph} ${e.element.padEnd(6)} ${e.on ? e.label : '— locked'}`, e.on ? 'line--ok' : 'line--faint'));
   }
   ctx.out(blank());
   ctx.out(cmdRow('  next:', [
     ['whois', `whois ${m.handle}`],
+    ['follow', `follow ${m.handle}`],
     ['showcase', 'showcase'],
-    ['members', 'members'],
+  ]));
+  ctx.out(blank());
+}
+
+/**
+ * `player` — the playable card.
+ *
+ * Bare, it shows the player's own run: XP earned by exploring, the level that
+ * XP buys, which elements are unlocked, the streak, and the next thing worth
+ * doing. Given a handle, it falls back to that builder's static card.
+ */
+const player: Command['run'] = (args, ctx) => {
+  const me = MEMBERS[0];
+
+  if (args.length) {
+    const q = normQuery(args.join(' '));
+    const m = MEMBERS.find((x) => normQuery(x.handle) === q || normQuery(x.name) === q);
+    if (!m) {
+      ctx.out(line(`player: unknown builder "${args.join(' ')}"`, 'line--err'));
+      ctx.out(line('  try `members` for handles, or bare `player` for your own card.', 'line--faint'));
+      return;
+    }
+    builderCard(m, ctx);
+    return;
+  }
+
+  const p = snapshot();
+  // Power is the xp actually earned. The site's 100/shipped and 50/badge weights
+  // describe authored work; a visitor authors nothing, so those stay at zero.
+  const pwr = p.xp;
+  const level = levelOf(p.xp);
+  const tier = tierOf(pwr);
+  const toNext = xpForLevel(level + 1) - p.xp;
+
+  ctx.out(blank());
+  const head = document.createElement('div');
+  head.className = 'line';
+  head.append(
+    cmdLink(`@${me.handle}`, 'progress'),
+    document.createTextNode('   '),
+    tag(tier, tier === 'COMMON' ? '' : 'hot'),
+    document.createTextNode('   '),
+    tag(`Lv ${level}`, 'ok'),
+  );
+  ctx.out(head);
+  ctx.out(line(`  ${me.name} · visitor is the player · this card is your run`, 'line--faint'));
+  ctx.out(blank());
+
+  // XP meter toward the next level
+  const floorXp = xpForLevel(level);
+  const span = Math.max(1, xpForLevel(level + 1) - floorXp);
+  ctx.out(meter(Math.round(((p.xp - floorXp) / span) * 100), 24));
+  ctx.out(line(
+    level >= 100 ? '  max level.' : `  ${p.xp} xp · ${toNext} to level ${level + 1}`,
+    'line--faint',
+  ));
+  ctx.out(blank());
+
+  ctx.out(kv([
+    ['xp', `${p.xp} xp`],
+    ['power', `${pwr} pwr`],
+    ['scanned', `${p.scanned.length} / ${SHOWCASE.length} projects`],
+    ['visited', `${p.visited.length}`],
+    ['repos', `${p.repoed.length}`],
+    ['bounties read', `${p.bounties.length}`],
+    ['following', p.followed.length ? p.followed.map((h) => `@${h}`).join(', ') : '— nobody yet'],
+    ['streak', p.streak > 1 ? `${p.streak} days` : p.streak === 1 ? 'day 1 — come back tomorrow' : '— start today'],
+  ]));
+  ctx.out(blank());
+
+  ctx.out(line('  elements', 'line--faint'));
+  // Unlocks come from what the run actually did, so each one names a real act.
+  const ELEMENT_UNLOCKS: { glyph: string; element: string; label: string; done: boolean }[] = [
+    { glyph: '\u25bc', element: 'WATER', label: 'Ships projects to the showcase', done: p.visited.length >= 1 },
+    { glyph: '\u25b2', element: 'FIRE', label: 'Wins bounties and competitions', done: p.bounties.length >= 1 },
+    { glyph: '\u2731', element: 'VOLT', label: 'Keeps a live contribution streak', done: p.streak > 1 },
+    { glyph: '\u2248', element: 'WIND', label: 'Earns badges across the platform', done: p.followed.length >= 1 },
+  ];
+  for (const e of ELEMENT_UNLOCKS) {
+    ctx.out(line(`   ${e.glyph} ${e.element.padEnd(6)} ${e.done ? e.label : '— locked'}`, e.done ? 'line--ok' : 'line--faint'));
+  }
+  ctx.out(blank());
+
+  if (!isPersistent()) {
+    ctx.out(line('  note: storage is blocked here, so this run will not survive a reload.', 'line--warn'));
+  }
+  if (p.scanned.length === 0) {
+    ctx.out(line('  you have not explored anything yet. every new project you open pays xp.', 'line--warn'));
+  }
+  ctx.out(cmdRow('  next:', [
+    ['showcase', 'showcase'],
+    ['scan <project>', 'scan'],
+    ['bounties', 'bounties'],
+    ['save', 'save'],
   ]));
   ctx.out(blank());
 };
 
+/* ------------------------------------------------------------ the loop --- */
+
+/** Shared line for a repeat visit: no xp, and say why. */
+function alreadySeen(ctx: Ctx, what: string): void {
+  ctx.out(line(`  ${what} — already counted. xp only comes from the first look.`, 'line--faint'));
+}
+
+/** Report the XP a command just earned, and celebrate a level-up. */
+function reportAward(a: Award, ctx: Ctx): void {
+  if (!a.first) return;
+  ctx.out(line(`  +${a.gained} xp`, 'line--ok'));
+  if (a.levelAfter > a.levelBefore) {
+    ctx.out(blank());
+    ctx.out(line(`  ▲ level ${a.levelBefore} → level ${a.levelAfter}`, 'line--info'));
+    ctx.out(line('  type `player` to see the new card.', 'line--faint'));
+  }
+}
+
+/** Resolve a project argument or explain why it failed. */
+function needProject(args: string[], ctx: Ctx, verb: string): ShowcaseProject | null {
+  const raw = args.join(' ');
+  if (!raw) {
+    ctx.out(line(`${verb}: which project?  try \`showcase\``, 'line--warn'));
+    return null;
+  }
+  const p = resolveProjects(raw)[0];
+  if (!p) {
+    ctx.out(line(`${verb}: nothing matching "${raw}"`, 'line--err'));
+    ctx.out(line('  try `showcase` for the list.', 'line--faint'));
+    return null;
+  }
+  return p;
+}
+
+/** Inspect a project and pay for the first look. Same card the site shows. */
+const scan: Command['run'] = (args, ctx) => {
+  const p = args.length ? needProject(args, ctx, 'scan') : pickRandom(ctx);
+  if (!p) return;
+  projectCard(p, ctx);
+  reportAward(award('scan', p.id), ctx);
+};
+
+/** Pick an unexamined project, or a random one once the set is exhausted. */
+function pickRandom(ctx: Ctx): ShowcaseProject {
+  const seen: Record<string, true> = {};
+  for (const id of snapshot().scanned) seen[id] = true;
+  const fresh = SHOWCASE.filter((p) => !seen[p.id]);
+  if (!fresh.length) {
+    ctx.out(line(`  every project scanned. ${SHOWCASE.length} of ${SHOWCASE.length} — nothing new to find.`, 'line--ok'));
+    return SHOWCASE[Math.floor(Math.random() * SHOWCASE.length)];
+  }
+  const p = fresh[Math.floor(Math.random() * fresh.length)];
+  ctx.out(line(`  scanning at random · ${fresh.length} of ${SHOWCASE.length} still unseen`, 'line--faint'));
+  return p;
+}
+
+/** Open the repo of a project. */
+const repo: Command['run'] = (args, ctx) => {
+  const p = args.length ? needProject(args, ctx, 'repo') : pickRandom(ctx);
+  if (!p) return;
+  if (!p.git) {
+    ctx.out(line(`repo: "${p.title}" has no source on record.`, 'line--warn'));
+    return;
+  }
+  ctx.out(line(`  opening ${p.title} → ${p.git}`, 'line--ok'));
+  window.open(p.git, '_blank', 'noopener,noreferrer');
+  reportAward(award('repo', p.id), ctx);
+};
+
+/** Follow a builder. */
+const follow: Command['run'] = (args, ctx) => {
+  const handle = (args[0] ?? '').replace(/^@/, '').toLowerCase();
+  const m = MEMBERS.find((x) => x.handle.toLowerCase() === handle);
+  if (!m) {
+    ctx.out(line(`follow: unknown builder "${args[0] ?? ''}"`, 'line--err'));
+    ctx.out(line('  try `members` for handles.', 'line--faint'));
+    return;
+  }
+  const a = award('follow', m.handle);
+  ctx.out(line(a.first ? `  following @${m.handle}` : `  already following @${m.handle}`, 'line--ok'));
+  reportAward(a, ctx);
+};
+
+/** The raw numbers, for anyone who wants them without the card. */
+const progress: Command['run'] = (_a, ctx) => {
+  const p = snapshot();
+  ctx.out(blank());
+  ctx.out(kv([
+    ['xp', `${p.xp} xp`],
+    ['level', `${levelOf(p.xp)} / 100`],
+    ['scanned projects', `${p.scanned.length} / ${SHOWCASE.length}`],
+    ['visited sites', String(p.visited.length)],
+    ['repos opened', String(p.repoed.length)],
+    ['bounty briefs read', `${p.bounties.length} / ${BOUNTIES.length}`],
+    ['builders followed', p.followed.length ? p.followed.map((h) => `@${h}`).join(', ') : '—'],
+    ['streak', p.streak ? `${p.streak} day${p.streak > 1 ? 's' : ''} (last ${p.lastDay})` : '—'],
+  ]));
+  ctx.out(blank());
+  ctx.out(line('  xp is paid once per subject. `save` to move this run to another machine.', 'line--faint'));
+  ctx.out(blank());
+};
+
+/** Print a transferable code for the current run. */
+const save: Command['run'] = (_a, ctx) => {
+  const code = exportSave();
+  ctx.out(blank());
+  ctx.out(line('  save code — paste into `load` on any machine:', 'line--info'));
+  ctx.out(blank());
+  const box = document.createElement('div');
+  box.className = 'line';
+  box.style.wordBreak = 'break-all';
+  box.append(raw(`<span style="color:var(--amber)">${code}</span>`));
+  ctx.out(box);
+  ctx.out(blank());
+  if (!isPersistent()) {
+    ctx.out(line('  storage is blocked here, so this code is the only copy — keep it.', 'line--warn'));
+  }
+  ctx.out(blank());
+};
+
+/** Load a run from a code produced by `save`. */
+const load: Command['run'] = (args, ctx) => {
+  const code = args.join(' ').trim();
+  if (!code) {
+    ctx.out(line('load: paste a save code.  `save` prints one.', 'line--warn'));
+    return;
+  }
+  const res = importSave(code);
+  if (!res.ok) {
+    ctx.out(line(`load: ${res.reason}`, 'line--err'));
+    ctx.out(line('  codes are `${payload}.${checksum}` — copy the whole thing.', 'line--faint'));
+    return;
+  }
+  ctx.out(line(`  loaded — ${res.xp} xp restored.`, 'line--ok'));
+  ctx.out(line('  `player` to see it.', 'line--faint'));
+};
+
+/** Wipe the run. */
+const resetCmd: Command['run'] = (_a, ctx) => {
+  resetProgress();
+  ctx.out(line('  progress cleared. level 1, nothing scanned.', 'line--ok'));
+  ctx.out(line('  `scan` pays again from here.', 'line--faint'));
+};
+
 export const REGISTRY: Command[] = [
   { name: 'start',   args: '',  group: 'system',    summary: 'new here? the guided path', run: start },
-  { name: 'player',  args: '[handle]', group: 'community', summary: 'player card: level, tier, elements', run: player },
+  { name: 'player',  args: '[handle]', group: 'community', summary: 'your run: xp, level, elements', run: player },
+  { name: 'scan',    args: '[project]', group: 'community', summary: 'inspect a project (+15 xp, first time)', run: scan },
+  { name: 'repo',    args: '[project]', group: 'navigate', summary: 'open a project source (+10 xp)', run: repo },
+  { name: 'follow',  args: '<handle>', group: 'community', summary: 'follow a builder (+10 xp)', usage: 'follow <handle>', run: follow },
+  { name: 'progress', args: '', group: 'system', summary: 'your raw numbers', run: progress },
+  { name: 'save',    args: '', group: 'system',    summary: 'print a transferable save code', run: save },
+  { name: 'load',    args: '<code>', group: 'system', summary: 'restore a run from a save code', usage: 'load <code>', run: load },
+  { name: 'reset',   args: '', group: 'system',    summary: 'wipe the run and start over', run: resetCmd },
   { name: 'help',    args: '',  group: 'system',    summary: 'list every command', run: help },
   { name: 'whoami',  args: '',  group: 'community', summary: 'the operator behind this terminal', run: whoami },
   { name: 'members', args: '[stack|role]', group: 'community', summary: 'list builders, optionally filtered', run: members },

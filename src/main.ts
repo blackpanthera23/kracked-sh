@@ -12,6 +12,12 @@ import { tokenize, History, type Ctx } from './term/shell';
 import { Graph } from './term/graph';
 import { line, blank, echo, raw, cmdRow } from './term/output';
 import { MEMBERS } from './data';
+import { countCmd, setProjectTable } from './term/progress';
+import { SHOWCASE } from './showcase';
+
+// the persisted run stores indices into this table, so install it before any
+// command runs — progress.ts hydrates itself from localStorage at this point
+setProjectTable(SHOWCASE.map((p) => p.id));
 
 const screen  = document.getElementById('screen')!;
 const form    = document.getElementById('promptForm') as HTMLFormElement;
@@ -135,6 +141,7 @@ async function execute(rawInput: string): Promise<void> {
 
   append(echo(src));
   history.push(src);
+  countCmd();
 
   const [name, ...args] = tokenize(src);
   const cmd = REGISTRY.find((c) => c.name === name);
@@ -309,7 +316,7 @@ screen.addEventListener('scroll', () => {
 /* ------------------------------------------------------------- idle demo --- */
 
 let idleTimer = 0;
-const DEMO: string[] = ['start', 'showcase'];
+const DEMO: string[] = ['start', 'scan', 'player'];
 let demoRunning = false;
 
 function resetIdle() {
@@ -369,8 +376,8 @@ let suggestEl: HTMLElement | null = null;
 function suggestRow(): HTMLElement {
   suggestEl?.remove();
   const row = cmdRow('  try this:', [
-    ['attach to community topology', 'attach'],
-    ['browse showcase', 'showcase'],
+    ['scan a random project', 'scan'],
+    ['your player card', 'player'],
   ]);
   suggestEl = row;
   return row;
@@ -414,8 +421,10 @@ async function start() {
     `<span style="color:var(--fg-faint)">  type </span>` +
     `<span style="color:var(--green)">help</span>` +
     `<span style="color:var(--fg-faint)"> to start, or </span>` +
+    `<span style="color:var(--green)">player</span>` +
+    `<span style="color:var(--fg-faint)"> for your run, or </span>` +
     `<span style="color:var(--green)">attach</span>` +
-    `<span style="color:var(--fg-faint)"> to see the community map.</span>`,
+    `<span style="color:var(--fg-faint)"> to see the map.</span>`,
   ));
   append(blank());
 

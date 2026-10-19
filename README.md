@@ -103,6 +103,7 @@ src/
     progress.ts       the run: xp, elements, save/load
 scripts/
   sync-showcase.mjs   regenerate src/showcase.ts from the live site
+  test-city.py        drive the city in a real browser and assert it works
 ```
 
 ## Run
@@ -116,6 +117,21 @@ npm run preview
 npm run sync-showcase      # refresh src/showcase.ts from krackeddevs.com
 npm run sync-showcase:dry  # show what a sync would change, touch nothing
 ```
+
+### Testing the city
+
+The city is a game, so it is tested by playing it, not by unit tests. Start a
+Chrome with `--remote-debugging-port=9555`, serve the build, then:
+
+```bash
+npm run build
+(cd dist && python3 -m http.server 5299) &
+npm run test:city          # needs `websockets`
+```
+
+It opens the city, walks with WASD and the arrows, holds a key, walks into a
+wall, walks to a project, taps a building to reach its door, opens it, and fails
+non-zero on any console error. Screenshot of the final state: `/tmp/city-shot.png`.
 
 ### Refreshing the showcase
 

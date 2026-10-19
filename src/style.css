@@ -511,6 +511,8 @@ a:hover { color: var(--green); border-bottom-color: var(--green); }
   letter-spacing: 0;
   white-space: pre;
   color: var(--fg-faint);
+  cursor: crosshair;
+  touch-action: manipulation;
   text-shadow: 0 0 6px color-mix(in oklab, var(--green) 12%, transparent);
   user-select: none;
 }

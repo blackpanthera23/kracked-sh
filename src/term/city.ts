@@ -183,9 +183,18 @@ export class City {
   /** The building whose door the player is on, if any. */
   private doorHere(): Building | null {
     const t = this.at(this.x, this.y);
-    if (!t || t.b < 0) return null;
-    const b = this.buildings[t.b];
-    return b && this.inDoorway(b, this.x, this.y) ? b : null;
+    if (t && t.b >= 0) {
+      const b = this.buildings[t.b];
+      if (b && this.inDoorway(b, this.x, this.y)) return b;
+    }
+    // standing next to a door counts too, so a tap that lands beside it still reads
+    for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]] as const) {
+      const n = this.at(this.x + dx, this.y + dy);
+      if (!n || n.b < 0) continue;
+      const b = this.buildings[n.b];
+      if (b && this.inDoorway(b, this.x + dx, this.y + dy)) return b;
+    }
+    return null;
   }
 
   /* --------------------------------------------------------------- input */
@@ -205,6 +214,7 @@ export class City {
     const dir = map[k];
     if (!dir) return false;
     e.preventDefault();
+    this.route = null;   // a key press takes over from any tapped walk
     this.held.add(dir);
     this.face = dir === 'up' ? 0 : dir === 'right' ? 1 : dir === 'down' ? 2 : 3;
     // a single tap should always move one tile, even between ticks
@@ -232,6 +242,23 @@ export class City {
     const dt = Math.min(0.1, (now - this.last) / 1000);
     this.last = now;
     if (this.held.size > 0) {
+      // a tapped destination re-plans each step, so the player works around blocks
+      if (this.route) {
+        const [tx, ty] = this.route;
+        if (this.x === tx && this.y === ty) {
+          this.route = null;
+          this.held.clear();
+        } else {
+          const step = this.nextStep(tx, ty);
+          this.held.clear();
+          if (step) {
+            this.held.add(step);
+            this.face = step === 'up' ? 0 : step === 'right' ? 1 : step === 'down' ? 2 : 3;
+          } else {
+            this.route = null;   // unreachable after all; stop rather than grind
+          }
+        }
+      }
       this.acc += dt * STEPS_PER_SEC;
       let moved = false;
       while (this.acc >= 1) {
@@ -305,9 +332,91 @@ export class City {
     return this.running;
   }
 
-  /** Where the player is, for the status line. */
+  /**
+   * Walk toward a tile tapped on the map. Pathfinds around buildings rather than
+   * through them, so a tap on the far side of a block still gets you there. The
+   * visitor stops the walk by tapping the player, pressing a key, or leaving.
+   */
+  tapTo(tx: number, ty: number): boolean {
+    if (!this.running) return false;
+    tx = Math.max(0, Math.min(this.w - 1, tx));
+    ty = Math.max(0, Math.min(this.h - 1, ty));
+    // tapping a building walks to its door instead of refusing
+    const cell = this.at(tx, ty);
+    if (cell && cell.b >= 0) {
+      const b = this.buildings[cell.b];
+      tx = b.x + Math.floor(b.w / 2);
+      ty = b.y + b.h - 1;
+    }
+    if (!this.walkable(tx, ty) || (tx === this.x && ty === this.y)) return false;
+    const dir = this.nextStep(tx, ty);
+    if (!dir) return false;
+    this.route = [tx, ty];
+    this.held.clear();
+    this.held.add(dir);
+    this.face = dir === 'up' ? 0 : dir === 'right' ? 1 : dir === 'down' ? 2 : 3;
+    this.step(dir);   // move one tile at once, so a tap never feels ignored
+    this.acc = 0;
+    this.draw();
+    return true;
+  }
+
+  /**
+   * Breadth-first over the walkable grid: the first move of the shortest path
+   * from here to a target tile. Routes around buildings instead of grinding into
+   * the wall between the player and the tap.
+   */
+  private nextStep(tx: number, ty: number): string | null {
+    const start = this.y * this.w + this.x;
+    const goal = ty * this.w + tx;
+    if (start === goal) return null;
+    const prev = new Map<number, number>();
+    const seen = new Set<number>([start]);
+    const queue: number[] = [start];
+    const dirs: [string, number, number][] = [['up', 0, -1], ['right', 1, 0], ['down', 0, 1], ['left', -1, 0]];
+    while (queue.length && !seen.has(goal)) {
+      const cur = queue.shift()!;
+      const cx = cur % this.w;
+      const cy = (cur / this.w) | 0;
+      for (const [, dx, dy] of dirs) {
+        const nx = cx + dx;
+        const ny = cy + dy;
+        if (nx < 0 || ny < 0 || nx >= this.w || ny >= this.h) continue;
+        const ni = ny * this.w + nx;
+        if (seen.has(ni) || !this.walkable(nx, ny)) continue;
+        seen.add(ni);
+        prev.set(ni, cur);
+        queue.push(ni);
+      }
+    }
+    if (!seen.has(goal)) return null;
+    let node = goal;
+    while (prev.get(node) !== undefined && prev.get(node) !== start) node = prev.get(node)!;
+    const nx = node % this.w;
+    const ny = (node / this.w) | 0;
+    return ny < this.y ? 'up' : ny > this.y ? 'down' : nx < this.x ? 'left' : 'right';
+  }
+
+  /** Stop a tapped walk — any key press means the visitor took over. */
+  cancelRoute(): void {
+    this.route = null;
+  }
+
+  /** The tap target the visitor is walking to, if any. */
+  private route: [number, number] | null = null;
+
+/** Where the player is, for the status line. */
   get position(): { x: number; y: number; facing: string } {
-    return { x: this.x, y: this.y, facing: ['north', 'east', 'south', 'west'][this.face] };
+    return { x: this.x, y: this.y, facing: ['north', 'east', 'south', 'west'][this.face] ?? 'east' };
+  }
+
+  /** Map dimensions, so a click can be converted into a tile. */
+  get width(): number {
+    return this.w;
+  }
+
+  get height(): number {
+    return this.h;
   }
 
   /** Walk to the door of a named building, so `explore <project>` works from the shell. */

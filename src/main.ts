@@ -129,7 +129,7 @@ const ctx: Ctx = {
       cityMap,
       (b) => {
         if (!b) {
-          cityWhere.innerHTML = '<span class="city__cta">walk up to a building and press Enter</span>';
+          cityWhere.innerHTML = '<span class="city__cta">walk up to a building and press Enter, or tap a spot to walk there</span>';
           return;
         }
         cityWhere.innerHTML =
@@ -342,6 +342,32 @@ document.addEventListener('keydown', (e) => {
 
 document.addEventListener('keyup', (e) => {
   city?.handleKeyUp(e);
+});
+
+/* The city is a <pre>, so a click lands on a character, not a tile. Convert the
+   pixel offset into a grid cell and walk there — the only way to move on a
+   touchscreen, and the easiest way with a mouse. */
+cityMap.addEventListener('click', (e) => {
+  if (!city?.isRunning) return;
+  const map = cityMap;
+  const probe = document.createElement('span');
+  probe.textContent = '0';
+  map.appendChild(probe);
+  const charW = probe.getBoundingClientRect().width;
+  probe.remove();
+  const lineH = map.getBoundingClientRect().height / (city.height + 0.5);
+  if (!charW || !lineH) return;
+
+  const rect = map.getBoundingClientRect();
+  const cs = getComputedStyle(map);
+  const padX = parseFloat(cs.paddingLeft) || 0;
+  const padY = parseFloat(cs.paddingTop) || 0;
+  const cellX = Math.floor((e.clientX - rect.left - padX) / charW);
+  const cellY = Math.floor((e.clientY - rect.top - padY) / lineH);
+  // the first `pad` columns are the row number, plus one space
+  const gutter = String(city.width).length + 1;
+  city.tapTo(cellX - gutter, cellY);
+  e.preventDefault();
 });
 
 // clicking the canvas also detaches — the obvious thing to try

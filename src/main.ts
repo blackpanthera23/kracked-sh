@@ -12,7 +12,7 @@ import { tokenize, History, type Ctx } from './term/shell';
 import { Graph } from './term/graph';
 import { line, blank, echo, raw, cmdRow } from './term/output';
 import { MEMBERS } from './data';
-import { countCmd, setProjectTable } from './term/progress';
+import { countCmd, setProjectTable, setDemoMode } from './term/progress';
 import { SHOWCASE } from './showcase';
 
 // the persisted run stores indices into this table, so install it before any
@@ -339,33 +339,40 @@ function cancelDemo(): void {
 async function runDemo() {
   if (demoRunning || input.value.trim() || graph?.isRunning) return;
   demoRunning = true;
+  // the walkthrough is a preview: it must never credit the visitor's run
+  setDemoMode(true);
   ctx.status('demo', false);
-  append(blank());
-  append(line('  ── idle demo (type anything to take over) ──', 'line--faint'));
+  try {
+    append(blank());
+    append(line('  ── idle demo (type anything to take over) ──', 'line--faint'));
 
-  for (const cmd of DEMO) {
-    await sleep(650);
-    if (!demoRunning) return;
-    // type it out
-    for (let i = 1; i <= cmd.length; i++) {
+    for (const cmd of DEMO) {
+      await sleep(650);
+      if (!demoRunning) return;
+      // type it out
+      for (let i = 1; i <= cmd.length; i++) {
+        if (!demoRunning) { input.value = ''; syncCaret(); return; }
+        input.value = cmd.slice(0, i);
+        syncCaret();
+        await sleep(55);
+      }
+      await sleep(220);
       if (!demoRunning) { input.value = ''; syncCaret(); return; }
-      input.value = cmd.slice(0, i);
+      input.value = '';
       syncCaret();
-      await sleep(55);
+      await execute(cmd);
+      if (cmd === 'start') {
+        // continuity: leave a way into the topology right where the eye lands
+        append(blank());
+        append(suggestRow());
+      }
     }
-    await sleep(220);
-    if (!demoRunning) { input.value = ''; syncCaret(); return; }
-    input.value = '';
-    syncCaret();
-    await execute(cmd);
-    if (cmd === 'start') {
-      // continuity: leave a way into the topology right where the eye lands
-      append(blank());
-      append(suggestRow());
-    }
+  } finally {
+    // never leave the run suppressed, however the demo exits
+    setDemoMode(false);
+    demoRunning = false;
+    ctx.status('ready');
   }
-  demoRunning = false;
-  ctx.status('ready');
 }
 
 /* --------------------------------------------------------- suggestions --- */

@@ -184,11 +184,24 @@ export interface Award {
 /**
  * Credit XP for looking at one subject. Idempotent per subject: the second
  * call for the same id or handle returns 0 and does not touch the save.
+ *
+ * While the idle demo is on screen nothing is credited — that walkthrough is a
+ * preview, and a visitor who typed nothing has not explored anything.
  */
+let demoMode = false;
+
+/** Enter or leave demo mode. Awards are dropped while it is on. */
+export function setDemoMode(on: boolean): void {
+  demoMode = on;
+}
+
 export function award(kind: XpKind, subject: string): Award {
   const field = FIELD[kind];
   const bucket = state[field];
   const before = levelOf(state.xp);
+  if (demoMode) {
+    return { gained: 0, first: false, levelBefore: before, levelAfter: before, streakContinued: false };
+  }
   if (!Array.isArray(bucket)) {
     return { gained: 0, first: false, levelBefore: before, levelAfter: before, streakContinued: false };
   }

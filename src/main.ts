@@ -10,6 +10,7 @@ import './style.css';
 import { REGISTRY, COMMAND_NAMES, banner, boot } from './term/commands';
 import { tokenize, History, type Ctx } from './term/shell';
 import { Graph } from './term/graph';
+import { City, type Building } from './term/city';
 import { line, blank, echo, raw, cmdRow } from './term/output';
 import { MEMBERS } from './data';
 import { countCmd, setProjectTable, setDemoMode } from './term/progress';
@@ -30,10 +31,22 @@ const cwdEl    = document.getElementById('cwd')!;
 const termEl   = document.getElementById('term')!;
 const graphEl  = document.getElementById('graph')!;
 const tipEl    = document.getElementById('graphTip')!;
+const cityEl   = document.getElementById('city')!;
+const cityMap  = document.getElementById('cityMap')!;
+const cityWhere = document.getElementById('cityWhere')!;
 const history = new History();
 let graph: Graph | null = null;
+let city: City | null = null;
+/** Set while the city is entering a project, so the shell does not double-report. */
+let cityEntering = false;
 function setBusy(on: boolean): void {
   statusL.classList.toggle('busy', on);
+}
+
+/** Titles come from the live site, so never interpolate them as markup. */
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) =>
+    c === '&' ? '&amp;' : c === '<' ? '&lt;' : c === '>' ? '&gt;' : c === '"' ? '&quot;' : '&#39;');
 }
 
 /* ---------------------------------------------------------------- output --- */
@@ -42,8 +55,27 @@ function atBottom(): boolean {
   return screen.scrollHeight - screen.scrollTop - screen.clientHeight < 60;
 }
 
+/**
+ * Set when the visitor acts on purpose — typing a command, clicking a chip.
+ * That intent outranks "were we already at the bottom?": the reply to an action
+ * is what they asked for, so the view follows it down. A visitor who has
+ * scrolled up to read is never yanked mid-read, because only an action sets it.
+ */
+let anchor = false;
+
+/** Follow the output to the bottom on the next frames, until the layout settles. */
+function anchorToBottom(): void {
+  anchor = true;
+  const settle = (frames: number) => {
+    if (frames <= 0) return;
+    screen.scrollTop = screen.scrollHeight;
+    requestAnimationFrame(() => settle(frames - 1));
+  };
+  settle(4);
+}
+
 function append(node: HTMLElement): void {
-  const stick = atBottom();
+  const stick = anchor || atBottom();
   screen.append(node);
   if (stick) screen.scrollTop = screen.scrollHeight;
 }
@@ -89,6 +121,31 @@ const ctx: Ctx = {
       // visibility:hidden input is a silent no-op — wait for the style flush
       requestAnimationFrame(() => input.focus());
     }
+  },
+  explore(id) {
+    cityEl.classList.add('city--on');
+    termEl.classList.add('term--detached');
+    city ??= new City(
+      cityMap,
+      (b) => {
+        if (!b) {
+          cityWhere.innerHTML = '<span class="city__cta">walk up to a building and press Enter</span>';
+          return;
+        }
+        cityWhere.innerHTML =
+          `<b>${escapeHtml(b.title)}</b> <span class="city__meta">by @${escapeHtml(b.author)}</span><br>` +
+          `<span class="city__cta">press Enter to go inside</span>`;
+      },
+      (b) => {
+        // leave the city and run the normal card, so there is one source of truth
+        cityExit();
+        void submit(`open ${b.id}`);
+      },
+    );
+    city.start();
+    if (id) city.walkTo(id);
+    // exposed so the world can be inspected from the console / tests, like __graph
+    (window as unknown as Record<string, unknown>).__city = city;
   },
   clear() {
     screen.replaceChildren();
@@ -174,6 +231,8 @@ async function submit(rawInput: string) {
     return;
   }
   setBusy(true);
+  // the visitor asked for this, so keep the answer in view
+  anchorToBottom();
   await execute(src);
   setBusy(false);
   scheduleNudge();
@@ -253,6 +312,38 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+/* The city owns the keyboard while it is up. Movement keys must not reach the
+   hidden prompt, and Escape leaves. Everything else falls through. */
+function cityExit(why?: string): void {
+  if (!city?.isRunning) return;
+  city.stop();
+  cityEl.classList.remove('city--on');
+  termEl.classList.remove('term--detached');
+  if (why) append(line(`  left the city (${why}).`, 'line--dim'));
+  ctx.status('ready');
+  requestAnimationFrame(() => input.focus());
+}
+
+document.addEventListener('keydown', (e) => {
+  if (!city?.isRunning) return;
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    cityExit('Esc');
+    return;
+  }
+  if (city.handleKey(e)) {
+    e.preventDefault();
+    if (e.key === 'Enter' || e.key === ' ') ctx.status('walking');
+    const p = city.position;
+    ctx.cwd(`city ${p.x},${p.y}`);
+    return;
+  }
+});
+
+document.addEventListener('keyup', (e) => {
+  city?.handleKeyUp(e);
+});
+
 // clicking the canvas also detaches — the obvious thing to try
 document.getElementById('graph')?.addEventListener('click', () => detachFromTopology('click'));
 
@@ -265,6 +356,8 @@ screen.addEventListener('click', (e) => {
   cancelDemo();
   const cmd = btn.dataset.cmd ?? '';
   if (!cmd) return;
+  // the chip is what they clicked, so the answer belongs on screen
+  anchorToBottom();
   input.focus();
   void ctx.run(cmd);
 });
@@ -308,6 +401,8 @@ screen.addEventListener('click', () => {
 });
 
 screen.addEventListener('scroll', () => {
+  // scrolling up to read is the visitor saying "stop following"
+  if (!atBottom()) anchor = false;
   if (document.activeElement === input) return;
   if (screen.scrollTop + screen.clientHeight < screen.scrollHeight - 4) return;
   input.focus({ preventScroll: true });

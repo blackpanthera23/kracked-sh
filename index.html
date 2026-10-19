@@ -73,6 +73,24 @@
         </div>
       </div>
     </div>
+
+    <!-- isometric-free ASCII city for `explore` -->
+    <div class="city" id="city" aria-hidden="true">
+      <div class="city__frame" id="cityFrame">
+        <pre class="city__map" id="cityMap"></pre>
+      </div>
+      <div class="city__hud">
+        <span class="city__label">KRACKED CITY</span>
+        <span class="city__hint"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> walk · <kbd>Enter</kbd> enter · <kbd>Esc</kbd> leave</span>
+        <div class="city__where" id="cityWhere"></div>
+      </div>
+      <div class="city__legend">
+        <span><i class="sw sw--you"></i>you</span>
+        <span><i class="sw sw--door"></i>door</span>
+        <span><i class="sw sw--wall"></i>building</span>
+        <span class="city__legend-note">each building is a shipped project</span>
+      </div>
+    </div>
   </div>
 
   <p id="hint" class="sr-only">Type <code>help</code> to list commands. Use Tab to complete, up and down arrows for history.</p>

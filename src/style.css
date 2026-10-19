@@ -477,3 +477,82 @@ a:hover { color: var(--green); border-bottom-color: var(--green); }
   box-shadow: 0 0 6px currentColor;
 }
 .graph__legend-note { color: var(--border-hi); }
+/* ---------------------------------------------------------------- the city */
+
+.city {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 420ms ease;
+  background: radial-gradient(1100px 700px at 50% 45%, #06121a 0%, var(--bg-deep) 78%);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+.city--on { opacity: 1; pointer-events: auto; }
+
+/* the map is one <pre>; it must not wrap or the streets break */
+.city__frame {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  padding: 64px 24px 56px;
+  overflow: hidden;
+}
+.city__map {
+  margin: 0;
+  font-family: var(--font-mono);
+  /* 80 columns of monospace must fit the frame, so scale to the viewport */
+  font-size: clamp(6px, 1.22vw, 19px);
+  line-height: 1.02;
+  letter-spacing: 0;
+  white-space: pre;
+  color: var(--fg-faint);
+  text-shadow: 0 0 6px color-mix(in oklab, var(--green) 12%, transparent);
+  user-select: none;
+}
+
+.city__hud {
+  position: absolute;
+  inset: 22px 22px auto;
+  display: grid;
+  gap: 4px;
+  pointer-events: none;
+}
+.city__label { color: var(--accent); font-size: var(--fs-xs); letter-spacing: 0.16em; }
+.city__hint  { color: var(--fg-faint); font-size: var(--fs-xs); }
+.city__where {
+  margin-top: 10px;
+  color: var(--fg);
+  font-size: var(--fs-sm);
+  min-height: 3.2em;
+  max-width: 520px;
+}
+.city__where b { color: var(--accent); font-weight: 500; }
+.city__where .city__meta { color: var(--fg-dim); }
+.city__where .city__cta { color: var(--fg-dim); }
+
+.city__legend {
+  position: absolute;
+  left: 44px;
+  bottom: 26px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  font-size: var(--fs-xs);
+  color: var(--fg-faint);
+  pointer-events: none;
+}
+.city__legend span { display: inline-flex; align-items: center; gap: 6px; }
+.city__legend .sw {
+  width: 8px; height: 8px; border-radius: 50%;
+  display: inline-block;
+  box-shadow: 0 0 6px currentColor;
+}
+.city__legend .sw--you  { background: var(--green); color: var(--green); }
+.city__legend .sw--door { background: var(--amber); color: var(--amber); }
+.city__legend .sw--wall { background: var(--border-hi); color: var(--border-hi); }
+.city__legend-note { color: var(--border-hi); }

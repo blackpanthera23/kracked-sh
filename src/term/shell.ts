@@ -19,6 +19,8 @@ export interface Ctx {
   cwd: (path: string) => void;
   /** Enter or leave the community graph layer. */
   attach: (on: boolean) => void;
+  /** Enter the walkable ASCII city, optionally walking to a project. */
+  explore: (id?: string) => void;
   /** Clear the scrollback. */
   clear: () => void;
   /** Submit a command as if typed. */

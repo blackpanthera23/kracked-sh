@@ -404,6 +404,28 @@ const attach: Command['run'] = async (_a, ctx) => {
   ctx.status('attached', false);
 };
 
+/** Walk the city. With an argument, walk straight to that project's door. */
+const explore: Command['run'] = async (args, ctx) => {
+  const want = args.join(' ').trim();
+  if (!want) {
+    ctx.out(line('  opening the city…', 'line--dim'));
+    await ctx.sleep(260);
+    ctx.explore();
+    ctx.status('walking', false);
+    return;
+  }
+  const hits = resolveProjects(want);
+  if (hits.length === 0) {
+    ctx.out(line(`explore: nothing matches "${want}".`, 'line--warn'));
+    return;
+  }
+  const target = hits[0];
+  ctx.out(line(`  walking to ${target.title}…`, 'line--dim'));
+  await ctx.sleep(260);
+  ctx.explore(target.id);
+  ctx.status('walking', false);
+};
+
 const join: Command['run'] = async (_a, ctx) => {
   ctx.out(blank());
   ctx.out(line('  kracked.sh — joining the community', 'line--info'));
@@ -861,6 +883,7 @@ export const REGISTRY: Command[] = [
   { name: 'about',   args: '', group: 'navigate', summary: 'what Kracked Devs is', run: (a, ctx) => cat(['about'], ctx) },
   { name: 'manifesto', args: '', group: 'navigate', summary: 'the six rules builders ship by', run: (a, ctx) => cat(['manifesto'], ctx) },
   { name: 'attach',  args: '', group: 'navigate', summary: 'enter the community topology layer', run: attach },
+  { name: 'explore', args: '[project]', group: 'navigate', summary: 'walk the city; each building is a project', run: explore },
   { name: 'join',    args: '', group: 'navigate', summary: 'how to become a builder', run: join },
   { name: 'stats',   args: '', group: 'system', summary: 'community numbers', run: stats },
   { name: 'clear',   args: '', group: 'system', summary: 'clear the screen', run: clear },

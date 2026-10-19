@@ -9,6 +9,9 @@ commands. The signature moment is `attach`: the terminal collapses and a live
 community topology takes over — a canvas graph of builders, their collaborations
 and their power levels.
 
+`explore` opens the other world: a top-down ASCII city where every project is a
+building you walk up to. `WASD` / arrows move, `Enter` goes inside, `Esc` leaves.
+
 ## Why a shell
 
 Kracked Devs is a community *of developers*. A terminal signals the audience
@@ -40,6 +43,7 @@ showcase [filter]       browse shipped projects
 open <project>          open one project
 cat about|manifesto     read a document
 attach                  enter the community topology layer
+explore [project]       walk the city; each building is a project
 join                    how to become a builder
 stats                   community numbers + power distribution
 clear                   clear the screen
@@ -62,6 +66,10 @@ hidden: sudo, rm, vim, matrix, .join
 
 Shell features: **Tab** completion (commands and arguments), **↑/↓** history,
 **Ctrl+L** to clear, **Ctrl+C** to detach from the topology.
+
+The city: **WASD** or arrows to walk, hold a key to keep walking, **Enter** to go
+into the building you are standing at, **Esc** to leave. 420 projects are placed
+as buildings; the rest stay reachable through `showcase`.
 
 If a visitor types nothing for 9 seconds, a demo sequence types itself out so
 the page always demonstrates itself.
@@ -91,6 +99,7 @@ src/
     output.ts         DOM output primitives (line, table, kv, pwrBar, tag…)
     commands.ts       command registry, banner, boot sequence
     graph.ts          canvas topology layer
+    city.ts           walkable ASCII city, one building per project
     progress.ts       the run: xp, elements, save/load
 scripts/
   sync-showcase.mjs   regenerate src/showcase.ts from the live site

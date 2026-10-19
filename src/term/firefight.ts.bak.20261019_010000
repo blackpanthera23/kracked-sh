@@ -1,0 +1,1737 @@
+/**
+ * Production is on fire.
+ *
+ * The home screen's background. Behind the terminal a hazy server city burns:
+ * three labelled incidents — a memory leak, a merge conflict, a 500 — smoulder
+ * on the rooftops below the window, their smoke hangs over their own districts,
+ * and those districts have lost power. A small firefighter dinosaur waits on
+ * the roof ledge with a hose.
+ *
+ * None of it is interactive until the visitor asks. "take the hose" opens a
+ * lane under the terminal and only then does the game read the keyboard, and
+ * only while focus is inside that lane: A/D or the arrows walk, holding Space
+ * sprays at the nearest fire in range, letting go refills the tank. On a
+ * touchscreen you drag in the lane and hold the water button. Each fire put
+ * out thins its own smoke and turns its district's lights back on. When all
+ * three are out the incident is resolved, the dino sits down, and the sky stays
+ * clear — nothing relights unless the visitor presses replay.
+ *
+ * One Canvas 2D layer under the terminal. The skyline and its windows are baked
+ * on resize, so a frame only draws what moves. With reduced motion the
+ * background is a single still frame and only deliberate play animates.
+ */
+
+interface Incident {
+  label: string;
+  /** Where along the lane it burns, as a fraction of the width. */
+  at: number;
+}
+
+const INCIDENTS: readonly Incident[] = [
+  { label: 'memory leak', at: 0.15 },
+  { label: 'merge conflict', at: 0.45 },
+  { label: '500', at: 0.72 },
+];
+
+interface Fire extends Incident {
+  /** 1 = fully alight, 0 = out. */
+  hp: number;
+  out: boolean;
+  x: number;
+  /** Width of the building it burns on, and the y of that roof. */
+  w: number;
+  roof: number;
+  /** Eased 0..1: how far this district's lights are back on. */
+  lit: number;
+  /** Eased 0..1: how thick the smoke over this district is. */
+  smoke: number;
+  /** Seconds since water last reached it; a fire left alone creeps back. */
+  dry: number;
+  seed: number;
+}
+
+type Kind = 'water' | 'splash' | 'steam' | 'ember' | 'smoke';
+
+interface Particle {
+  k: Kind;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  age: number;
+  life: number;
+  r: number;
+  /** Water only: the fire it was aimed at, and the age at which it lands. */
+  aim: Fire | null;
+  hit: number;
+}
+
+/** A drop of spray clinging to the terminal's bottom edge. */
+interface Bead {
+  x: number;
+  r: number;
+  age: number;
+  drip: number;
+}
+
+interface Blink {
+  x: number;
+  y: number;
+  d: number;
+  phase: number;
+}
+
+type Pose = 'idle' | 'run' | 'spray' | 'rest';
+
+/** The tank empties in a little over three seconds and refills in two. */
+const DRAIN = 0.3;
+const REFILL = 0.5;
+/** About three seconds of steady water puts one fire out. */
+const DOUSE = 0.34;
+/** A fire nobody is spraying creeps back, but never past where it started. */
+const REGROW = 0.05;
+const GRAVITY = 900;
+const WIND = 12;
+const MAX_PARTICLES = 420;
+const MAX_BEADS = 24;
+
+const BODY = '#3ccf8e';
+const SHADE = '#1f8a5c';
+const BELLY = '#c9f7df';
+const INK = '#05070a';
+const HELMET = '#ff5a4a';
+const HELMET_DARK = '#a8322a';
+const BRASS = '#ffc857';
+const STEEL = '#9aa7b2';
+const HOSE = '#a86f35';
+
+type Rgb = readonly [number, number, number];
+
+/** Sky stops as [clear, burning]; the frame mixes them by how much is alight. */
+const SKY: readonly (readonly [Rgb, Rgb])[] = [
+  [[4, 6, 10], [9, 6, 8]],
+  [[6, 12, 17], [26, 13, 11]],
+  [[7, 20, 26], [62, 24, 13]],
+];
+
+const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v));
+
+function mix(a: Rgb, b: Rgb, t: number): string {
+  const k = clamp(t, 0, 1);
+  return `rgb(${Math.round(a[0] + (b[0] - a[0]) * k)}, ${Math.round(a[1] + (b[1] - a[1]) * k)}, ${Math.round(a[2] + (b[2] - a[2]) * k)})`;
+}
+
+/** Small seeded PRNG, so the city is the same street every visit. */
+function rng(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** A soft round puff, drawn once and stamped for smoke and steam. */
+function puff(r: number, g: number, b: number): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const x = c.getContext('2d');
+  if (!x) return c;
+  const grad = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grad.addColorStop(0, `rgba(${r}, ${g}, ${b}, 1)`);
+  grad.addColorStop(0.5, `rgba(${r}, ${g}, ${b}, 0.42)`);
+  grad.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
+  x.fillStyle = grad;
+  x.fillRect(0, 0, 64, 64);
+  return c;
+}
+
+function ellipse(c: CanvasRenderingContext2D, x: number, y: number, rx: number, ry: number): void {
+  c.beginPath();
+  c.ellipse(x, y, Math.max(0.01, rx), Math.max(0.01, ry), 0, 0, Math.PI * 2);
+  c.fill();
+}
+
+function roundRect(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
+  const rr = Math.min(r, w / 2, h / 2);
+  c.beginPath();
+  c.moveTo(x + rr, y);
+  c.arcTo(x + w, y, x + w, y + h, rr);
+  c.arcTo(x + w, y + h, x, y + h, rr);
+  c.arcTo(x, y + h, x, y, rr);
+  c.arcTo(x, y, x + w, y, rr);
+  c.closePath();
+}
+
+/** One tongue of flame: a teardrop that leans with the draught. */
+function tongue(c: CanvasRenderingContext2D, x: number, base: number, w: number, h: number, sway: number): void {
+  if (h < 1 || w < 0.5) return;
+  c.beginPath();
+  c.moveTo(x - w / 2, base);
+  c.quadraticCurveTo(x - w / 2, base - h * 0.55, x + sway, base - h);
+  c.quadraticCurveTo(x + w / 2, base - h * 0.55, x + w / 2, base);
+  c.closePath();
+  c.fill();
+}
+
+/** The command line, a textarea or anything editable: never game input. */
+function typing(t: EventTarget | null): boolean {
+  if (!(t instanceof HTMLElement)) return false;
+  return t.isContentEditable
+    || t instanceof HTMLInputElement
+    || t instanceof HTMLTextAreaElement
+    || t instanceof HTMLSelectElement;
+}
+
+function dirOf(e: KeyboardEvent): -1 | 0 | 1 {
+  if (e.key === 'ArrowLeft' || e.code === 'KeyA' || e.key === 'a' || e.key === 'A') return -1;
+  if (e.key === 'ArrowRight' || e.code === 'KeyD' || e.key === 'd' || e.key === 'D') return 1;
+  return 0;
+}
+
+export interface FirefightOptions {
+  /** The layer under the terminal: holds the canvas and the lane. */
+  root: HTMLElement;
+  /** The CRT frame; gains `crt--hose` while the lane is open. */
+  crt: HTMLElement;
+  /** The terminal window, whose bottom edge is the roof the dino works under. */
+  term: HTMLElement;
+  /** The opt-in button in the status bar. */
+  toggle: HTMLButtonElement;
+  /** Run a layout change, keeping the scrollback where the reader had it. */
+  relayout: (apply: () => void) => void;
+  /** The visitor took the hose. */
+  onEnter: () => void;
+  /** The visitor put it down; the shell takes focus back. */
+  onExit: () => void;
+  /** The last fire just went out. */
+  onResolved: () => void;
+}
+
+export interface FirefightState {
+  active: boolean;
+  paused: boolean;
+  resolved: boolean;
+  water: number;
+  x: number;
+  fires: { label: string; hp: number; out: boolean }[];
+}
+
+export class Firefight {
+  private o: FirefightOptions;
+  private canvas: HTMLCanvasElement;
+  private ctx: CanvasRenderingContext2D;
+  private lane: HTMLElement;
+  private pad: HTMLElement;
+  private sprayBtn: HTMLButtonElement;
+  private pauseBtn: HTMLButtonElement;
+  private replayBtn: HTMLButtonElement;
+  private exitBtn: HTMLButtonElement;
+  private labelEl: HTMLElement;
+  private countEl: HTMLElement;
+  private tankBox: HTMLElement;
+  private tankEl: HTMLElement;
+  private statusEl: HTMLElement;
+  private toggleLead: HTMLElement | null;
+  private toggleText: HTMLElement | null;
+
+  /** Silhouettes and powered-down racks, then the same racks lit. */
+  private base = document.createElement('canvas');
+  private lit = document.createElement('canvas');
+  private smokePuff = puff(150, 138, 130);
+  private steamPuff = puff(226, 236, 242);
+  private alarms: Blink[] = [];
+  private beacons: Blink[] = [];
+  private stars: { x: number; y: number; a: number }[] = [];
+  private fires: Fire[];
+  private particles: Particle[] = [];
+  private beads: Bead[] = [];
+
+  /* layout, in CSS pixels of the CRT frame */
+  private dpr = 1;
+  private W = 0;
+  private H = 0;
+  /** Lane height: the unit the whole street is measured in. */
+  private L = 150;
+  private ground = 0;
+  private termBottom = 0;
+  private termLeft = 0;
+  private termRight = 0;
+  private s = 1;
+  private range = 200;
+  private minX = 0;
+  private maxX = 0;
+  private hydrantX = 0;
+
+  /* the mascot */
+  private x = 0;
+  private placed = false;
+  private face: -1 | 1 = 1;
+  private phase = 0;
+  private aim = -0.35;
+  private moving = false;
+
+  /* game state */
+  private on = false;
+  private paused = false;
+  private resolved = false;
+  private suspended = false;
+  private reduced = false;
+  private coarse = false;
+  private water = 1;
+  private dryNow = false;
+  private keys = new Map<string, -1 | 1>();
+  private sprayKey = false;
+  private sprayHeld = false;
+  private sprayId: number | null = null;
+  private dragId: number | null = null;
+  private dragX: number | null = null;
+  private spraying = false;
+  private target: Fire | null = null;
+  private emitAcc = 0;
+  /** Shown over the dino until the visitor first moves or sprays. */
+  private hinted = false;
+
+  private raf = 0;
+  private last = 0;
+  private t = 0;
+  private tankShown = -1;
+
+  constructor(o: FirefightOptions) {
+    this.o = o;
+    const q = <T extends HTMLElement>(sel: string): T => {
+      const el = o.root.querySelector<T>(sel);
+      if (!el) throw new Error(`firefight: missing ${sel}`);
+      return el;
+    };
+    this.canvas = q<HTMLCanvasElement>('.fire__canvas');
+    const c = this.canvas.getContext('2d');
+    if (!c) throw new Error('2d context unavailable');
+    this.ctx = c;
+    this.lane = q('.fire__lane');
+    this.pad = q('[data-fire="pad"]');
+    this.sprayBtn = q<HTMLButtonElement>('[data-fire="spray"]');
+    this.pauseBtn = q<HTMLButtonElement>('[data-fire="pause"]');
+    this.replayBtn = q<HTMLButtonElement>('[data-fire="replay"]');
+    this.exitBtn = q<HTMLButtonElement>('[data-fire="exit"]');
+    this.labelEl = q('[data-fire="label"]');
+    this.countEl = q('[data-fire="count"]');
+    this.tankBox = q('[data-fire="tankbox"]');
+    this.tankEl = q('[data-fire="tank"]');
+    this.statusEl = q('[data-fire="status"]');
+    this.toggleLead = o.toggle.querySelector('.hose__lead');
+    this.toggleText = o.toggle.querySelector('.hose__text');
+
+    this.fires = INCIDENTS.map((inc, i) => ({
+      ...inc,
+      hp: 1,
+      out: false,
+      x: 0,
+      w: 60,
+      roof: 0,
+      lit: 0,
+      smoke: 1,
+      dry: 9,
+      seed: 0.7 + i * 2.3,
+    }));
+
+    const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
+    this.reduced = motion.matches;
+    motion.addEventListener('change', (e) => {
+      this.reduced = e.matches;
+      // nothing decorative survives the switch; the stream is drawn as an arc instead
+      this.particles = [];
+      this.beads = [];
+      this.kick();
+    });
+    const pointer = window.matchMedia('(pointer: coarse)');
+    this.coarse = pointer.matches;
+    pointer.addEventListener('change', (e) => { this.coarse = e.matches; });
+
+    o.toggle.addEventListener('click', () => (this.on ? this.exit() : this.enter()));
+    this.pauseBtn.addEventListener('click', () => (this.paused ? this.resume() : this.pause('')));
+    this.replayBtn.addEventListener('click', () => this.replay());
+    this.exitBtn.addEventListener('click', () => this.exit());
+
+    o.root.addEventListener('keydown', this.onKeyDown);
+    o.root.addEventListener('keyup', this.onKeyUp);
+
+    this.pad.addEventListener('pointerdown', this.onPadDown);
+    this.pad.addEventListener('pointermove', this.onPadMove);
+    this.pad.addEventListener('pointerup', this.onPadUp);
+    this.pad.addEventListener('pointercancel', this.onPadCancel);
+    this.pad.addEventListener('lostpointercapture', this.onPadUp);
+
+    this.sprayBtn.addEventListener('pointerdown', this.onSprayDown);
+    this.sprayBtn.addEventListener('pointerup', this.onSprayUp);
+    this.sprayBtn.addEventListener('pointercancel', this.onSprayCancel);
+    this.sprayBtn.addEventListener('lostpointercapture', this.onSprayUp);
+    this.sprayBtn.addEventListener('keydown', this.onSprayKey);
+    this.sprayBtn.addEventListener('keyup', this.onSprayKey);
+    // a long press must hold the hose, not open a menu
+    this.sprayBtn.addEventListener('contextmenu', (e) => e.preventDefault());
+    this.pad.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    // anything that takes the visitor away stops the game and drops held input
+    window.addEventListener('blur', () => this.pause('window lost focus'));
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) this.pause('tab hidden');
+      else this.kick();
+    });
+    // focus landing outside the lane — the prompt, a link — means they chose something else
+    document.addEventListener('focusin', (e) => {
+      if (!this.on) return;
+      const t = e.target;
+      // the status-bar toggle is about to close the lane itself
+      if (t === o.toggle || (t instanceof Node && o.root.contains(t))) return;
+      this.pause('focus left the game');
+    });
+    // keys released after focus has gone never reach us, so forget them now;
+    // pointers are captured and report their own release
+    o.root.addEventListener('focusout', (e) => {
+      const next = e.relatedTarget;
+      if (next instanceof Node && o.root.contains(next)) return;
+      this.keys.clear();
+      this.sprayKey = false;
+    });
+
+    // sky, city and topology hide the terminal; the fire waits underneath
+    new MutationObserver(() => this.suspend(o.term.classList.contains('term--detached')))
+      .observe(o.term, { attributes: true, attributeFilter: ['class'] });
+    const ro = new ResizeObserver(() => this.layout());
+    ro.observe(o.crt);
+    ro.observe(o.term);
+    window.addEventListener('resize', this.layout);
+
+    this.lane.setAttribute('inert', '');
+    this.layout();
+    this.syncHud();
+    this.kick();
+  }
+
+  /* ------------------------------------------------------------ public API */
+
+  /** True while the lane is open and the game may read the keyboard. */
+  get active(): boolean {
+    return this.on;
+  }
+
+  /** A snapshot for the console and browser checks, like `__sky.stats()`. */
+  state(): FirefightState {
+    return {
+      active: this.on,
+      paused: this.paused,
+      resolved: this.resolved,
+      water: Math.round(this.water * 100) / 100,
+      x: Math.round(this.x),
+      fires: this.fires.map((f) => ({ label: f.label, hp: Math.round(f.hp * 100) / 100, out: f.out })),
+    };
+  }
+
+  /** Take the hose: open the lane and give the game keyboard focus. */
+  enter(): void {
+    if (this.on) return;
+    this.on = true;
+    this.paused = false;
+    this.hinted = false;
+    this.lane.removeAttribute('inert');
+    this.o.relayout(() => {
+      this.o.crt.classList.add('crt--hose');
+      this.o.root.classList.add('fire--on');
+    });
+    this.layout();
+    this.syncHud();
+    this.pad.focus({ preventScroll: true });
+    // the lane was hidden a moment ago; if the browser had not restyled yet, try once more
+    requestAnimationFrame(() => {
+      if (this.on && !this.o.root.contains(document.activeElement)) this.pad.focus({ preventScroll: true });
+    });
+    this.say(this.resolved
+      ? 'Incident already resolved. Press replay to start it again, or Escape to go back to the terminal.'
+      : 'Production is on fire: memory leak, merge conflict and 500. A and D or the arrow keys move, hold Space to spray the nearest fire, let go to refill. Escape returns to the terminal.');
+    this.o.onEnter();
+    this.last = 0;
+    this.kick();
+  }
+
+  /** Put the hose down. The fires stay as they are; the prompt gets focus back. */
+  exit(): void {
+    if (!this.on) return;
+    this.clearInput();
+    this.on = false;
+    this.paused = false;
+    this.beads = [];
+    this.lane.setAttribute('inert', '');
+    this.o.relayout(() => {
+      this.o.crt.classList.remove('crt--hose');
+      this.o.root.classList.remove('fire--on');
+    });
+    this.layout();
+    this.syncHud();
+    this.o.onExit();
+    this.kick();
+  }
+
+  /** Relight all three incidents. Only ever called by the visitor. */
+  replay(): void {
+    for (const f of this.fires) {
+      f.hp = 1;
+      f.out = false;
+      f.dry = 9;
+    }
+    this.resolved = false;
+    this.paused = false;
+    this.water = 1;
+    this.dryNow = false;
+    this.beads = [];
+    this.clearInput();
+    this.syncHud();
+    this.say('Replay: memory leak, merge conflict and 500 are burning again.');
+    if (this.on) this.pad.focus({ preventScroll: true });
+    this.kick();
+  }
+
+  /* ----------------------------------------------------------- state flow */
+
+  private pause(why: string): void {
+    this.clearInput();
+    if (!this.on || this.paused || this.resolved) return;
+    this.paused = true;
+    this.syncHud();
+    this.say(`Paused${why ? ` (${why})` : ''}. Press resume or P to carry on.`);
+    this.kick();
+  }
+
+  private resume(): void {
+    if (!this.on || !this.paused) return;
+    this.paused = false;
+    this.last = 0;
+    this.syncHud();
+    this.say('Resumed.');
+    if (!this.o.root.contains(document.activeElement) || document.activeElement === this.pauseBtn) {
+      this.pad.focus({ preventScroll: true });
+    }
+    this.kick();
+  }
+
+  private suspend(on: boolean): void {
+    if (on === this.suspended) return;
+    this.suspended = on;
+    if (on) this.pause('another view opened');
+    else this.layout();
+    this.kick();
+  }
+
+  private clearInput(): void {
+    this.keys.clear();
+    this.sprayKey = false;
+    this.sprayHeld = false;
+    this.spraying = false;
+    if (this.dragId !== null && this.pad.hasPointerCapture(this.dragId)) {
+      try { this.pad.releasePointerCapture(this.dragId); } catch { /* already released */ }
+    }
+    if (this.sprayId !== null && this.sprayBtn.hasPointerCapture(this.sprayId)) {
+      try { this.sprayBtn.releasePointerCapture(this.sprayId); } catch { /* already released */ }
+    }
+    this.dragId = null;
+    this.dragX = null;
+    this.sprayId = null;
+    this.sprayBtn.classList.remove('is-on');
+  }
+
+  private get playing(): boolean {
+    return this.on && !this.paused && !this.resolved && !this.suspended;
+  }
+
+  private extinguish(f: Fire): void {
+    f.hp = 0;
+    f.out = true;
+    if (!this.reduced) {
+      for (let i = 0; i < 14; i++) {
+        this.spawn('steam', f.x + (Math.random() - 0.5) * f.w * 0.6, f.roof - Math.random() * 10,
+          (Math.random() - 0.5) * 30, -40 - Math.random() * 50, 1 + Math.random() * 0.8, (6 + Math.random() * 6) * this.s);
+      }
+    }
+    const left = this.fires.filter((x) => !x.out).length;
+    if (left === 0) {
+      this.resolved = true;
+      this.clearInput();
+      this.syncHud();
+      this.say('Incident resolved. Uptime restored.');
+      this.o.onResolved();
+      return;
+    }
+    this.syncHud();
+    this.say(`${f.label} is out. ${this.fires.length - left} of ${this.fires.length} contained.`);
+  }
+
+  private say(msg: string): void {
+    this.statusEl.textContent = msg;
+  }
+
+  private syncHud(): void {
+    const out = this.fires.filter((f) => f.out).length;
+    this.labelEl.textContent = this.resolved ? 'RESOLVED' : 'ON FIRE';
+    this.labelEl.classList.toggle('is-ok', this.resolved);
+    this.countEl.textContent = this.resolved ? 'uptime restored' : `${out}/${this.fires.length} out`;
+    this.tankBox.hidden = this.resolved;
+    this.pauseBtn.hidden = this.resolved;
+    this.pauseBtn.textContent = this.paused ? 'resume' : 'pause';
+    this.replayBtn.hidden = !this.resolved;
+    this.sprayBtn.hidden = this.resolved;
+    this.lane.classList.toggle('is-paused', this.paused);
+
+    const t = this.o.toggle;
+    t.setAttribute('aria-pressed', String(this.on));
+    t.classList.toggle('hose--ok', this.resolved);
+    if (this.toggleLead) this.toggleLead.textContent = this.on || this.resolved ? '' : 'prod is on fire · ';
+    if (this.toggleText) {
+      this.toggleText.textContent = this.on ? 'drop the hose' : this.resolved ? 'uptime restored' : 'take the hose';
+    }
+    t.setAttribute('aria-label', this.on
+      ? 'Put the hose down and return to the terminal'
+      : this.resolved
+        ? 'Incident resolved. Open the firefighter game to replay'
+        : 'Production is on fire. Take the hose to play the firefighter game');
+  }
+
+  /* ---------------------------------------------------------------- input */
+
+  private onKeyDown = (e: KeyboardEvent): void => {
+    if (!this.on || typing(e.target)) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      this.exit();
+      return;
+    }
+    if (e.key === 'p' || e.key === 'P') {
+      if (this.resolved) return;
+      e.preventDefault();
+      if (this.paused) this.resume();
+      else this.pause('');
+      return;
+    }
+    // the water button handles its own keys; buttons keep Space and Enter
+    if (e.target === this.sprayBtn) return;
+    const d = dirOf(e);
+    if (d) {
+      e.preventDefault();
+      if (this.playing) this.keys.set(e.code || e.key, d);
+      return;
+    }
+    if ((e.key === ' ' || e.code === 'Space') && e.target === this.pad) {
+      e.preventDefault();
+      if (this.playing) this.sprayKey = true;
+    }
+  };
+
+  private onKeyUp = (e: KeyboardEvent): void => {
+    if (!this.on || typing(e.target)) return;
+    if (dirOf(e)) this.keys.delete(e.code || e.key);
+    if (e.key === ' ' || e.code === 'Space') {
+      if (e.target === this.pad) e.preventDefault();
+      this.sprayKey = false;
+    }
+  };
+
+  /** Pointer x in canvas space. */
+  private localX(clientX: number): number {
+    return clientX - this.o.root.getBoundingClientRect().left;
+  }
+
+  private onPadDown = (e: PointerEvent): void => {
+    if (!this.on || this.resolved) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    e.preventDefault();
+    this.pad.focus({ preventScroll: true });
+    if (this.paused) this.resume();
+    this.dragId = e.pointerId;
+    try { this.pad.setPointerCapture(e.pointerId); } catch { /* pointer already gone */ }
+    this.dragX = this.localX(e.clientX);
+  };
+
+  private onPadMove = (e: PointerEvent): void => {
+    if (e.pointerId !== this.dragId) return;
+    this.dragX = this.localX(e.clientX);
+  };
+
+  private onPadUp = (e: PointerEvent): void => {
+    if (e.pointerId !== this.dragId) return;
+    this.dragId = null;
+    this.dragX = null;
+  };
+
+  private onPadCancel = (e: PointerEvent): void => {
+    if (e.pointerId !== this.dragId) return;
+    this.pause('touch cancelled');
+  };
+
+  private onSprayDown = (e: PointerEvent): void => {
+    if (!this.on || this.resolved) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    e.preventDefault();
+    if (this.paused) this.resume();
+    this.sprayId = e.pointerId;
+    try { this.sprayBtn.setPointerCapture(e.pointerId); } catch { /* pointer already gone */ }
+    this.sprayHeld = true;
+    this.sprayBtn.classList.add('is-on');
+  };
+
+  private onSprayUp = (e: PointerEvent): void => {
+    if (e.pointerId !== this.sprayId) return;
+    this.sprayId = null;
+    this.sprayHeld = false;
+    this.sprayBtn.classList.remove('is-on');
+  };
+
+  private onSprayCancel = (e: PointerEvent): void => {
+    if (e.pointerId !== this.sprayId) return;
+    this.pause('touch cancelled');
+  };
+
+  /** Space or Enter on the focused water button holds it, like a pointer. */
+  private onSprayKey = (e: KeyboardEvent): void => {
+    if (e.key !== ' ' && e.key !== 'Enter') return;
+    e.preventDefault();
+    if (e.type === 'keydown') {
+      if (!this.on || this.resolved) return;
+      if (this.paused) this.resume();
+      this.sprayHeld = true;
+      this.sprayBtn.classList.add('is-on');
+    } else {
+      this.sprayHeld = false;
+      this.sprayBtn.classList.remove('is-on');
+    }
+  };
+
+  /* --------------------------------------------------------------- layout */
+
+  private layout = (): void => {
+    const root = this.o.root;
+    const W = root.clientWidth;
+    const H = root.clientHeight;
+    if (!W || !H) return;
+    // offsets, not rects: the terminal scales while it fades between worlds
+    const term = this.o.term;
+    this.termBottom = term.offsetTop + term.offsetHeight;
+    this.termLeft = term.offsetLeft;
+    this.termRight = term.offsetLeft + term.offsetWidth;
+    const L = Math.max(96, this.lane.offsetHeight);
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    if (W === this.W && H === this.H && L === this.L && dpr === this.dpr) {
+      this.kick();
+      return;
+    }
+    this.W = W;
+    this.H = H;
+    this.L = L;
+    this.dpr = dpr;
+    this.canvas.width = Math.round(W * dpr);
+    this.canvas.height = Math.round(H * dpr);
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    this.ground = H - Math.max(6, Math.round(L * 0.06));
+    this.s = clamp(L / 150, 0.72, 1.2);
+    this.range = clamp(W * 0.24, 150, 280);
+    this.hydrantX = 14 + 6 * this.s;
+    this.minX = this.hydrantX + 24 * this.s;
+    // the water button owns the bottom-right corner; the dino stops short of it
+    const btnLeft = this.sprayBtn.offsetParent ? this.sprayBtn.offsetLeft : W;
+    this.maxX = Math.max(this.minX + 60, Math.min(W - 20 - 26 * this.s, btnLeft - 18 * this.s));
+    for (const f of this.fires) {
+      f.w = clamp(L * 0.44, 44, 84);
+      f.x = Math.round(clamp(f.at * W, this.minX + 40, W - 130));
+      f.roof = this.ground - L * 0.2;
+    }
+    if (!this.placed) {
+      this.x = this.minX + 30 * this.s;
+      this.placed = true;
+    }
+    this.x = clamp(this.x, this.minX, this.maxX);
+    this.bake();
+    this.kick();
+  };
+
+  private span(i: number): [number, number] {
+    const f = this.fires;
+    const a = i === 0 ? 0 : (f[i - 1].x + f[i].x) / 2;
+    const b = i === f.length - 1 ? this.W : (f[i].x + f[i + 1].x) / 2;
+    return [a, b];
+  }
+
+  private district(x: number): number {
+    for (let i = 0; i < this.fires.length; i++) {
+      if (x < this.span(i)[1]) return i;
+    }
+    return this.fires.length - 1;
+  }
+
+  /** Paint the skyline once: silhouettes and dark racks, and a lit copy. */
+  private bake(): void {
+    const { W, H, ground, L, dpr } = this;
+    this.base.width = Math.max(1, Math.round(W * dpr));
+    this.base.height = Math.max(1, Math.round(H * dpr));
+    this.lit.width = Math.max(1, W);
+    this.lit.height = Math.max(1, H);
+    const b = this.base.getContext('2d');
+    const l = this.lit.getContext('2d');
+    if (!b || !l) return;
+    b.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const rand = rng(0x6b726163);
+    this.alarms = [];
+    this.beacons = [];
+
+    // far: tall server towers, lighter so they sit back in the haze
+    for (let x = -12 - rand() * 24; x < W + 12;) {
+      const w = 34 + rand() * 64;
+      const top = ground - H * (0.18 + rand() * 0.4);
+      b.fillStyle = '#0a1219';
+      b.fillRect(x, top, w, ground - top);
+      if (rand() < 0.35) {
+        const cw = w * (0.3 + rand() * 0.35);
+        const ch = 6 + rand() * 16;
+        b.fillRect(x + (w - cw) / 2, top - ch, cw, ch);
+      }
+      b.fillStyle = '#13202b';
+      b.fillRect(x, top, w, 1);
+      if (rand() < 0.3) {
+        const ax = Math.round(x + w * (0.2 + rand() * 0.6)) + 0.5;
+        const ah = 10 + rand() * 26;
+        b.strokeStyle = '#16232e';
+        b.lineWidth = 1;
+        b.beginPath();
+        b.moveTo(ax, top);
+        b.lineTo(ax, top - ah);
+        b.stroke();
+        this.beacons.push({ x: ax, y: top - ah, d: this.district(ax), phase: rand() * 6.3 });
+      }
+      this.rack(b, l, x, top + 6, w, ground - 4, 7, 9, 0.55, rand);
+      x += w + 3 + rand() * 16;
+    }
+
+    // near: low halls across the street, leaving room around each fire
+    const clear = (x: number, w: number): boolean =>
+      this.fires.every((f) => x + w < f.x - f.w / 2 - 8 || x > f.x + f.w / 2 + 8);
+    for (let x = -10 - rand() * 20; x < W + 10;) {
+      const w = 60 + rand() * 90;
+      const top = ground - L * (0.07 + rand() * 0.09);
+      if (clear(x, w)) {
+        b.fillStyle = '#070b10';
+        b.fillRect(x, top, w, ground - top);
+        b.fillStyle = '#16212b';
+        b.fillRect(x, top, w, 1);
+        this.rack(b, l, x, top + 5, w, ground - 3, 8, 7, 0.65, rand);
+      }
+      x += w + 6 + rand() * 30;
+    }
+
+    // the three buildings that are on fire, with a parapet for the flames to sit on
+    for (const f of this.fires) {
+      const x = f.x - f.w / 2;
+      b.fillStyle = '#0b1117';
+      b.fillRect(x, f.roof, f.w, ground - f.roof);
+      b.fillStyle = '#1b2733';
+      b.fillRect(x - 3, f.roof - 3, f.w + 6, 3);
+      // the top rows are left dark: they glow with the fire inside, per frame
+      this.rack(b, l, x, f.roof + 18, f.w, ground - 3, 8, 7, 0.7, rand);
+    }
+
+    this.stars = [];
+    for (let i = 0; i < 70; i++) this.stars.push({ x: rand() * W, y: rand() * H * 0.55, a: 0.2 + rand() * 0.6 });
+  }
+
+  /** A grid of rack LEDs: dim on the base layer, coloured on the lit one. */
+  private rack(
+    b: CanvasRenderingContext2D, l: CanvasRenderingContext2D,
+    x: number, top: number, w: number, bottom: number,
+    px: number, py: number, density: number, rand: () => number,
+  ): void {
+    const cols = Math.floor((w - 6) / px);
+    if (cols < 1) return;
+    const ox = x + (w - cols * px) / 2 + 1;
+    const ww = px > 7 ? 4 : 3;
+    b.fillStyle = 'rgba(43, 61, 77, 0.5)';
+    for (let y = top; y < bottom; y += py) {
+      for (let i = 0; i < cols; i++) {
+        if (rand() > density) continue;
+        const wx = Math.round(ox + i * px);
+        const wy = Math.round(y);
+        b.fillRect(wx, wy, ww, 2);
+        const roll = rand();
+        l.fillStyle = roll < 0.07 ? 'rgba(255, 200, 87, 0.85)'
+          : roll < 0.42 ? 'rgba(86, 216, 255, 0.8)'
+            : 'rgba(53, 255, 158, 0.8)';
+        l.fillRect(wx, wy, ww, 2);
+        if (rand() < 0.014) this.alarms.push({ x: wx, y: wy, d: this.district(wx), phase: rand() * 6.3 });
+      }
+    }
+  }
+
+  /* ----------------------------------------------------------------- loop */
+
+  private kick(): void {
+    if (this.raf) return;
+    this.raf = requestAnimationFrame(this.frame);
+  }
+
+  /** Whether anything should move: always, unless the visitor asked for stillness. */
+  private live(): boolean {
+    return !this.reduced || this.playing;
+  }
+
+  private frame = (now: number): void => {
+    this.raf = 0;
+    if (this.suspended || document.hidden || !this.W) return;
+    const live = this.live();
+    // the background idles at ~30 fps; only play earns the full rate
+    if (live && !this.playing && this.last && now - this.last < 32) {
+      this.raf = requestAnimationFrame(this.frame);
+      return;
+    }
+    const dt = this.last ? clamp((now - this.last) / 1000, 0, 0.05) : 1 / 60;
+    this.last = now;
+    if (live) {
+      this.t += dt;
+      this.ambient(dt);
+      if (this.playing) this.play(dt);
+    } else {
+      this.settle();
+    }
+    this.draw();
+    this.syncTank();
+    if (live) this.raf = requestAnimationFrame(this.frame);
+    else this.last = 0;
+  };
+
+  /** Still frame: jump every eased value to where it is heading. */
+  private settle(): void {
+    for (const f of this.fires) {
+      f.smoke = f.out ? 0 : 0.35 + 0.65 * f.hp;
+      f.lit = f.out ? 1 : 0;
+    }
+    this.particles = [];
+    this.beads = [];
+  }
+
+  private spawn(k: Kind, x: number, y: number, vx: number, vy: number, life: number, r: number): void {
+    if (this.particles.length >= MAX_PARTICLES) return;
+    this.particles.push({ k, x, y, vx, vy, age: 0, life, r, aim: null, hit: Infinity });
+  }
+
+  /** Everything that moves whether or not anyone is playing. */
+  private ambient(dt: number): void {
+    for (const f of this.fires) {
+      const smoke = f.out ? 0 : 0.35 + 0.65 * f.hp;
+      f.smoke += (smoke - f.smoke) * Math.min(1, dt * 1.2);
+      f.lit += ((f.out ? 1 : 0) - f.lit) * Math.min(1, dt * (this.reduced ? 6 : 0.9));
+      if (this.reduced || f.out) continue;
+      const top = f.roof - this.flameH(f);
+      if (Math.random() < dt * 7 * f.smoke) {
+        this.spawn('smoke', f.x + (Math.random() - 0.5) * f.w * 0.5, top + 6,
+          6 + Math.random() * 10, -(22 + Math.random() * 16), 5 + Math.random() * 3, 8 * this.s);
+      }
+      if (Math.random() < dt * 5 * f.hp) {
+        this.spawn('ember', f.x + (Math.random() - 0.5) * f.w * 0.6, f.roof - Math.random() * this.flameH(f),
+          (Math.random() - 0.5) * 20, -(40 + Math.random() * 50), 1.2 + Math.random() * 1.2, 0.8 + Math.random() * 1.2);
+      }
+    }
+
+    const keep: Particle[] = [];
+    for (const p of this.particles) {
+      p.age += dt;
+      if (p.age >= p.life) continue;
+      switch (p.k) {
+        case 'smoke':
+          p.x += (p.vx + WIND) * dt;
+          p.y += p.vy * dt;
+          p.r += dt * 7 * this.s;
+          break;
+        case 'steam':
+          p.x += p.vx * dt;
+          p.y += p.vy * dt;
+          p.r += dt * 16 * this.s;
+          break;
+        case 'ember':
+          p.x += (p.vx + WIND + Math.sin(p.age * 6 + p.life * 9) * 14) * dt;
+          p.y += p.vy * dt;
+          break;
+        case 'splash':
+          p.vy += GRAVITY * dt;
+          p.x += p.vx * dt;
+          p.y += p.vy * dt;
+          if (p.y > this.ground) continue;
+          break;
+        case 'water':
+          if (!this.stepDrop(p, dt)) continue;
+          break;
+      }
+      keep.push(p);
+    }
+    this.particles = keep;
+
+    for (const b of this.beads) b.age += dt;
+    const hanging: Bead[] = [];
+    for (const b of this.beads) {
+      if (b.age < b.drip) {
+        hanging.push(b);
+        continue;
+      }
+      // heavy enough: it lets go and falls to the ledge
+      this.particles.push({ k: 'water', x: b.x, y: this.termBottom + b.r * 2, vx: 0, vy: 30, age: 0, life: 3, r: b.r * 0.8, aim: null, hit: Infinity });
+    }
+    this.beads = hanging;
+  }
+
+  /** Advance one drop of the stream. False once it has landed somewhere. */
+  private stepDrop(p: Particle, dt: number): boolean {
+    p.vy += GRAVITY * dt;
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    if (p.age >= p.hit) {
+      if (p.aim && !p.aim.out && Math.random() < 0.3) {
+        this.spawn('steam', p.x, p.y, (Math.random() - 0.5) * 20, -30 - Math.random() * 30, 0.7 + Math.random() * 0.4, 5 * this.s);
+      } else if (Math.random() < 0.4) {
+        this.spawn('splash', p.x, p.y, (Math.random() - 0.5) * 90, -60 - Math.random() * 60, 0.5, 1.2);
+      }
+      return false;
+    }
+    // spray that reaches the window clings to its bottom edge
+    if (this.on && p.vy < 0 && p.y <= this.termBottom + 1 && p.x > this.termLeft + 6 && p.x < this.termRight - 6) {
+      this.bead(p.x, p.r);
+      return false;
+    }
+    if (p.y >= this.ground) {
+      for (let i = 0; i < 2; i++) {
+        this.spawn('splash', p.x, this.ground - 1, (Math.random() - 0.5) * 80, -50 - Math.random() * 70, 0.45, 1.1);
+      }
+      return false;
+    }
+    return p.x > -20 && p.x < this.W + 20;
+  }
+
+  private bead(x: number, r: number): void {
+    const near = this.beads.find((b) => Math.abs(b.x - x) < 5);
+    if (near) {
+      near.r = Math.min(3.6 * this.s, near.r + r * 0.12);
+      return;
+    }
+    if (this.beads.length >= MAX_BEADS) this.beads[0].age = this.beads[0].drip;
+    this.beads.push({ x, r: Math.max(1.2, r * 0.8), age: 0, drip: 0.9 + Math.random() * 2.4 });
+  }
+
+  private flameH(f: Fire): number {
+    return f.out ? 0 : this.L * 0.3 * (0.25 + 0.75 * f.hp);
+  }
+
+  /** Where the hands hold the nozzle, in canvas space. */
+  private hands(): [number, number] {
+    return [this.x + this.face * 13 * this.s, this.ground - 19 * this.s];
+  }
+
+  /** Launch velocity that lands the stream on the target, or arcs it up to the window. */
+  private launch(): { vx: number; vy: number; T: number } {
+    const [hx, hy] = this.hands();
+    const f = this.target;
+    if (f) {
+      const dx = f.x - hx;
+      const dy = f.roof - this.flameH(f) * 0.45 - hy;
+      const T = clamp(Math.hypot(dx, dy) / 360, 0.3, 0.8);
+      return { vx: dx / T, vy: (dy - 0.5 * GRAVITY * T * T) / T, T };
+    }
+    // nothing in range: aim up at the terminal, where the spray beads on its edge
+    const rise = Math.max(40, hy - this.termBottom + 6);
+    const vy = -Math.sqrt(2 * GRAVITY * rise);
+    return { vx: this.face * Math.max(120, this.L * 0.9), vy, T: (-vy / GRAVITY) * 2 };
+  }
+
+  /** Movement, aim, water and the fires themselves. Only runs while playing. */
+  private play(dt: number): void {
+    let dir = 0;
+    for (const d of this.keys.values()) dir += d;
+    dir = Math.sign(dir);
+    if (this.dragX !== null) {
+      const dx = this.dragX - this.x;
+      dir = Math.abs(dx) > 3 ? Math.sign(dx) : 0;
+    }
+    if (dir) {
+      let step = dir * 230 * this.s * dt;
+      if (this.dragX !== null && Math.abs(step) > Math.abs(this.dragX - this.x)) step = this.dragX - this.x;
+      this.x = clamp(this.x + step, this.minX, this.maxX);
+      this.face = dir < 0 ? -1 : 1;
+      this.phase += dt * 15;
+      this.moving = true;
+      this.hinted = true;
+    } else {
+      this.moving = false;
+    }
+
+    this.target = null;
+    let best = Infinity;
+    for (const f of this.fires) {
+      if (f.out) continue;
+      const d = Math.abs(f.x - this.x);
+      if (d <= this.range && d < best) {
+        best = d;
+        this.target = f;
+      }
+    }
+
+    const wants = this.sprayKey || this.sprayHeld;
+    if (wants) this.hinted = true;
+    if (wants && this.water > 0) {
+      this.spraying = true;
+      this.water = Math.max(0, this.water - DRAIN * dt);
+      if (this.water === 0) this.say('Tank empty. Let go to refill.');
+      const f = this.target;
+      if (f) {
+        if (f.x !== this.x) this.face = f.x < this.x ? -1 : 1;
+        f.hp -= DOUSE * dt;
+        f.dry = 0;
+        if (f.hp <= 0) this.extinguish(f);
+      }
+      this.emit(dt);
+    } else {
+      this.spraying = false;
+      if (!wants) this.water = Math.min(1, this.water + REFILL * dt);
+    }
+    this.dryNow = wants && this.water <= 0;
+
+    for (const f of this.fires) {
+      if (f.out) continue;
+      f.dry += dt;
+      if (f.dry > 1.4) f.hp = Math.min(1, f.hp + REGROW * dt);
+    }
+
+    // the nozzle follows the stream, or rests pointing ahead and slightly up
+    let want = -0.35;
+    if (this.spraying || (this.target && Math.sign(this.target.x - this.x) === this.face)) {
+      const { vx, vy } = this.launch();
+      want = Math.atan2(vy, Math.abs(vx));
+    }
+    this.aim += (clamp(want, -1.45, 0.5) - this.aim) * Math.min(1, dt * 12);
+  }
+
+  private emit(dt: number): void {
+    if (this.reduced || this.resolved) return;
+    this.emitAcc += dt * 75;
+    const { vx, vy, T } = this.launch();
+    const [hx, hy] = this.hands();
+    const lead = 0.03;
+    while (this.emitAcc >= 1) {
+      this.emitAcc -= 1;
+      if (this.particles.length >= MAX_PARTICLES) continue;
+      const jx = 1 + (Math.random() - 0.5) * 0.06;
+      const jy = 1 + (Math.random() - 0.5) * 0.06;
+      const pvx = vx * jx;
+      const pvy = vy * jy;
+      this.particles.push({
+        k: 'water',
+        x: hx + pvx * lead,
+        y: hy + pvy * lead + 0.5 * GRAVITY * lead * lead,
+        vx: pvx,
+        vy: pvy + GRAVITY * lead,
+        age: 0,
+        life: 3,
+        r: (1.3 + Math.random()) * this.s,
+        aim: this.target,
+        hit: this.target ? T * (0.94 + Math.random() * 0.12) - lead : Infinity,
+      });
+    }
+  }
+
+  private syncTank(): void {
+    const w = Math.round(this.water * 100);
+    if (w === this.tankShown) return;
+    this.tankShown = w;
+    this.tankEl.style.width = `${w}%`;
+    this.tankBox.classList.toggle('is-dry', w < 15);
+  }
+
+  /* --------------------------------------------------------------- render */
+
+  /** 0 when the city is clear, 1 when everything is alight. */
+  private heat(): number {
+    let h = 0;
+    for (const f of this.fires) h += f.smoke;
+    return h / this.fires.length;
+  }
+
+  private draw(): void {
+    const c = this.ctx;
+    const { W, H, L } = this;
+    if (!W || !H) return;
+    const t = this.reduced ? 0 : this.t;
+    const heat = this.heat();
+    c.globalAlpha = 1;
+    c.globalCompositeOperation = 'source-over';
+
+    // sky: smoky orange underlit while it burns, cold and clear after
+    const sky = c.createLinearGradient(0, 0, 0, H);
+    sky.addColorStop(0, mix(SKY[0][0], SKY[0][1], heat));
+    sky.addColorStop(0.62, mix(SKY[1][0], SKY[1][1], heat));
+    sky.addColorStop(1, mix(SKY[2][0], SKY[2][1], heat));
+    c.fillStyle = sky;
+    c.fillRect(0, 0, W, H);
+
+    if (heat < 0.98) {
+      c.fillStyle = '#d7e3ec';
+      for (const s of this.stars) {
+        c.globalAlpha = s.a * (1 - heat) * 0.7;
+        c.fillRect(s.x, s.y, 1.2, 1.2);
+      }
+      c.globalAlpha = 1;
+    }
+
+    // firelight on the haze, behind the skyline so the towers stand against it
+    c.globalCompositeOperation = 'lighter';
+    for (const f of this.fires) {
+      if (f.smoke < 0.01 || f.out) continue;
+      const r = L * 2.4 + H * 0.15;
+      const g = c.createRadialGradient(f.x, f.roof, 0, f.x, f.roof, r);
+      g.addColorStop(0, `rgba(255, 98, 40, ${0.3 * f.hp})`);
+      g.addColorStop(1, 'rgba(255, 98, 40, 0)');
+      c.fillStyle = g;
+      c.fillRect(f.x - r, f.roof - r, r * 2, r * 2);
+    }
+    c.globalCompositeOperation = 'source-over';
+
+    c.drawImage(this.base, 0, 0, W, H);
+
+    // each district's racks come back on as its fire goes out
+    c.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < this.fires.length; i++) {
+      const f = this.fires[i];
+      if (f.lit < 0.01) continue;
+      const [a, b] = this.span(i);
+      const sw = Math.round(b) - Math.round(a);
+      if (sw <= 0) continue;
+      c.globalAlpha = f.lit;
+      c.drawImage(this.lit, Math.round(a), 0, sw, H, Math.round(a), 0, sw, H);
+    }
+    c.globalAlpha = 1;
+
+    // dark districts still show their alarm LEDs, pulsing slowly
+    c.fillStyle = '#ff5c6c';
+    for (const a of this.alarms) {
+      const dark = 1 - this.fires[a.d].lit;
+      if (dark < 0.05) continue;
+      c.globalAlpha = dark * (this.reduced ? 0.55 : 0.45 + 0.4 * Math.sin(t * 2.4 + a.phase));
+      c.fillRect(a.x, a.y, 3, 2);
+    }
+    for (const b of this.beacons) {
+      c.globalAlpha = this.reduced ? 0.5 : 0.3 + 0.3 * Math.sin(t * 1.6 + b.phase);
+      c.fillRect(b.x - 1, b.y - 1, 2, 2);
+    }
+    c.globalAlpha = 1;
+    c.globalCompositeOperation = 'source-over';
+
+    this.drawHaze(heat, t);
+    this.drawParticles('smoke');
+
+    for (const f of this.fires) this.drawFire(f, t);
+    c.globalCompositeOperation = 'lighter';
+    this.drawParticles('ember');
+    c.globalCompositeOperation = 'source-over';
+
+    this.drawLedge();
+    this.drawMascot(t);
+    this.drawWater();
+    this.drawParticles('steam');
+    this.drawBeads();
+    if (this.on) {
+      this.drawLabels(t);
+      this.drawCallouts();
+    }
+  }
+
+  private drawHaze(heat: number, t: number): void {
+    const c = this.ctx;
+    const { W, H, L, ground } = this;
+    if (heat > 0.01) {
+      const top = ground - H * 0.7;
+      const g = c.createLinearGradient(0, top, 0, ground);
+      g.addColorStop(0, 'rgba(58, 48, 44, 0)');
+      g.addColorStop(1, `rgba(58, 48, 44, ${0.34 * heat})`);
+      c.fillStyle = g;
+      c.fillRect(0, top, W, ground - top);
+    }
+    // each fire keeps its own pall: thinning it is how you see the fire weaken
+    for (const f of this.fires) {
+      if (f.smoke < 0.01) continue;
+      const drift = Math.sin(t * 0.15 + f.seed) * 14;
+      const R = L * 2.4;
+      c.globalAlpha = 0.42 * f.smoke;
+      c.drawImage(this.smokePuff, f.x - R + drift, f.roof - L * 1.1 - R * 0.6, R * 2, R * 1.4);
+      c.globalAlpha = 0.26 * f.smoke;
+      c.drawImage(this.smokePuff, f.x - R * 1.5 + drift * 2 + L * 0.4, f.roof - L * 2.4 - R, R * 3, R * 2);
+    }
+    c.globalAlpha = 1;
+  }
+
+  private drawParticles(k: Kind): void {
+    const c = this.ctx;
+    for (const p of this.particles) {
+      if (p.k !== k) continue;
+      const u = p.age / p.life;
+      if (k === 'smoke') {
+        c.globalAlpha = 0.3 * Math.min(1, p.age / 0.8) * (1 - u);
+        c.drawImage(this.smokePuff, p.x - p.r, p.y - p.r, p.r * 2, p.r * 2);
+      } else if (k === 'steam') {
+        c.globalAlpha = 0.4 * (1 - u);
+        c.drawImage(this.steamPuff, p.x - p.r, p.y - p.r, p.r * 2, p.r * 2);
+      } else if (k === 'ember') {
+        c.globalAlpha = 0.9 * (1 - u);
+        c.fillStyle = u < 0.5 ? '#ffd27a' : '#ff7a3c';
+        c.fillRect(p.x, p.y, p.r, p.r);
+      }
+    }
+    c.globalAlpha = 1;
+  }
+
+  private drawFire(f: Fire, t: number): void {
+    const c = this.ctx;
+    const x0 = f.x - f.w / 2;
+    if (f.out) {
+      // scorch marks on the parapet, so a cleared roof still reads as "was on fire"
+      c.fillStyle = 'rgba(0, 0, 0, 0.45)';
+      c.fillRect(x0 + f.w * 0.2, f.roof - 3, f.w * 0.6, 3);
+      return;
+    }
+    const h = this.flameH(f);
+
+    // the top floors glow from the fire inside
+    c.fillStyle = '#ff8a3c';
+    for (let row = 0; row < 2; row++) {
+      for (let col = 0; col * 8 + 10 < f.w; col++) {
+        const flick = this.reduced ? 0.7 : 0.55 + 0.45 * Math.sin(t * 7 + col * 1.3 + row * 2 + f.seed);
+        c.globalAlpha = f.hp * flick * (row === 0 ? 0.8 : 0.45);
+        c.fillRect(Math.round(x0 + 5 + col * 8), Math.round(f.roof + 5 + row * 7), 4, 2);
+      }
+    }
+    c.globalAlpha = 1;
+
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    const glowR = h * 1.5 + 10;
+    const g = c.createRadialGradient(f.x, f.roof - h * 0.3, 0, f.x, f.roof - h * 0.3, glowR);
+    g.addColorStop(0, `rgba(255, 120, 50, ${0.32 * f.hp + 0.08})`);
+    g.addColorStop(1, 'rgba(255, 120, 50, 0)');
+    c.fillStyle = g;
+    c.fillRect(f.x - glowR, f.roof - h * 0.3 - glowR, glowR * 2, glowR * 2);
+
+    const w = f.w * (0.42 + 0.4 * f.hp);
+    const layers: readonly (readonly [number, number, string])[] = [
+      [1, 1, 'rgba(255, 86, 48, 0.55)'],
+      [0.68, 0.62, 'rgba(255, 160, 64, 0.6)'],
+      [0.4, 0.34, 'rgba(255, 236, 170, 0.7)'],
+    ];
+    const n = 5;
+    for (const [kh, kw, col] of layers) {
+      c.fillStyle = col;
+      for (let i = 0; i < n; i++) {
+        const u = i / (n - 1) - 0.5;
+        const flick = this.reduced ? 1 : 0.8 + 0.14 * Math.sin(t * 9 + i * 1.7 + f.seed) + 0.06 * Math.sin(t * 23 + i * 3.1);
+        const th = h * kh * (1 - Math.abs(u) * 0.85) * flick;
+        const tw = w * 0.36 * kw;
+        const sway = this.reduced ? 0 : Math.sin(t * 4.5 + i * 2.1 + f.seed) * tw * 0.35;
+        tongue(c, f.x + u * w * 0.78 * kw, f.roof + 1, tw, th, sway);
+      }
+    }
+    c.restore();
+  }
+
+  /** The roof the dino stands on, and the standpipe its hose runs from. */
+  private drawLedge(): void {
+    const c = this.ctx;
+    const { W, H, ground, s } = this;
+    c.fillStyle = '#080c11';
+    c.fillRect(0, ground, W, H - ground);
+    c.fillStyle = '#2b3d4d';
+    c.fillRect(0, ground, W, 1);
+    c.fillStyle = '#111a23';
+    for (let x = 0; x < W; x += 48) c.fillRect(x, ground + 2, 46, 2);
+
+    const hx = this.hydrantX;
+    c.fillStyle = '#9c2f2f';
+    roundRect(c, hx - 4 * s, ground - 14 * s, 8 * s, 14 * s, 3 * s);
+    c.fill();
+    c.fillStyle = '#d6474a';
+    c.fillRect(hx - 6 * s, ground - 9 * s, 12 * s, 3 * s);
+    c.fillStyle = BRASS;
+    c.fillRect(hx - 1 * s, ground - 16 * s, 2 * s, 2.5 * s);
+  }
+
+  private pose(): Pose {
+    if (this.resolved) return 'rest';
+    if (!this.playing) return 'idle';
+    if (this.spraying) return 'spray';
+    return this.moving ? 'run' : 'idle';
+  }
+
+  /** Mascot scale for the space available: the lane when open, the gutter when not. */
+  private mascotScale(): number {
+    if (this.on) return this.s;
+    return Math.min(this.s, (this.ground - this.termBottom - 4) / 46);
+  }
+
+  private drawMascot(t: number): void {
+    const sc = this.mascotScale();
+    if (sc < 0.45) return;
+    const c = this.ctx;
+    const pose = this.pose();
+    const rest = pose === 'rest';
+    const g = this.ground;
+
+    // the hose: from the standpipe, along the ledge, up into the dino's hands
+    const [hx, hy] = rest
+      ? [this.x + this.face * 15 * sc, g - 2 * sc]
+      : [this.x + this.face * 13 * sc, g - 19 * sc];
+    c.strokeStyle = HOSE;
+    c.lineWidth = 2.4 * sc;
+    c.lineCap = 'round';
+    c.lineJoin = 'round';
+    c.beginPath();
+    c.moveTo(this.hydrantX + 4 * sc, g - 6 * this.s);
+    c.quadraticCurveTo(this.hydrantX + 10 * sc, g - 1.2 * sc, this.hydrantX + 18 * sc, g - 1.2 * sc);
+    c.lineTo(Math.max(this.hydrantX + 18 * sc, this.x - 8 * sc), g - 1.2 * sc);
+    c.quadraticCurveTo(this.x + this.face * 2 * sc, g - 2 * sc, hx, hy);
+    c.stroke();
+
+    this.drawDino(sc, pose, t);
+  }
+
+  /** An original mascot: a round little green dino in a red firefighter's helmet. */
+  private drawDino(sc: number, pose: Pose, t: number): void {
+    const c = this.ctx;
+    const rest = pose === 'rest';
+    const run = pose === 'run';
+    const bob = rest ? 5 : run ? -Math.abs(Math.sin(this.phase)) * 2.2 : Math.sin(t * 2.2) * 0.5;
+    c.save();
+    c.translate(this.x, this.ground);
+    c.scale(sc * this.face, sc);
+
+    c.fillStyle = 'rgba(0, 0, 0, 0.35)';
+    ellipse(c, rest ? 2 : 0, -0.6, 15, 2.2);
+
+    // tail
+    const wag = Math.sin(t * 3 + 1) * 1.4;
+    c.fillStyle = BODY;
+    c.beginPath();
+    c.moveTo(-8, -20 + bob);
+    if (rest) {
+      c.quadraticCurveTo(-24, -14 + bob, -25, -2);
+      c.quadraticCurveTo(-15, -3, -6, -9 + bob);
+    } else {
+      c.quadraticCurveTo(-22, -19 + bob, -28, -9 + bob + wag);
+      c.quadraticCurveTo(-18, -10 + bob, -7, -10 + bob);
+    }
+    c.closePath();
+    c.fill();
+
+    // legs
+    const leg = (lx: number, lift: number, col: string): void => {
+      c.fillStyle = col;
+      roundRect(c, lx - 3, -12 + bob * 0.5, 6, 12 - lift - bob * 0.5, 2.5);
+      c.fill();
+      c.fillStyle = SHADE;
+      ellipse(c, lx + 1.5, -1.3 - lift, 4.2, 1.9);
+    };
+    if (rest) {
+      c.fillStyle = SHADE;
+      ellipse(c, 5, -2.2, 5, 2.3);
+      c.fillStyle = BODY;
+      ellipse(c, 11, -2, 4.6, 2.1);
+    } else {
+      const swing = run ? Math.sin(this.phase) * 3.5 : 0;
+      const l1 = run ? Math.max(0, Math.sin(this.phase)) * 2.4 : 0;
+      const l2 = run ? Math.max(0, -Math.sin(this.phase)) * 2.4 : 0;
+      leg(-5 - swing, l2, SHADE);
+      leg(5 + swing, l1, BODY);
+    }
+
+    // back plates, then the body over their roots
+    c.fillStyle = SHADE;
+    for (const [px, py] of [[-9, -24.5], [-4.5, -27], [0.5, -27.6]] as const) {
+      c.beginPath();
+      c.moveTo(px - 2.6, py + 1.5 + bob);
+      c.lineTo(px, py - 3.6 + bob);
+      c.lineTo(px + 2.6, py + 1.5 + bob);
+      c.closePath();
+      c.fill();
+    }
+    c.fillStyle = BODY;
+    ellipse(c, 0, -17 + bob, 12.5, 10.5);
+    c.fillStyle = BELLY;
+    ellipse(c, 3.5, -15 + bob, 7.2, 7);
+
+    // a reflective turnout stripe round the middle
+    c.save();
+    c.beginPath();
+    c.ellipse(0, -17 + bob, 12.5, 10.5, 0, 0, Math.PI * 2);
+    c.clip();
+    c.fillStyle = BRASS;
+    c.fillRect(-14, -13.2 + bob, 28, 2.4);
+    c.fillStyle = 'rgba(215, 227, 236, 0.85)';
+    c.fillRect(-14, -12.4 + bob, 28, 0.8);
+    c.restore();
+
+    // head
+    const hb = bob + (rest ? 1 : 0);
+    c.fillStyle = BODY;
+    ellipse(c, 11, -31 + hb, 8.6, 8.6);
+    ellipse(c, 17.8, -28.4 + hb, 7, 5.1);
+    c.fillStyle = 'rgba(10, 60, 40, 0.35)';
+    ellipse(c, 16.5, -25 + hb, 6, 1.6);
+    c.fillStyle = 'rgba(255, 120, 150, 0.45)';
+    ellipse(c, 14.8, -27.6 + hb, 1.7, 1.7);
+
+    const blink = !this.reduced && t % 4.2 < 0.12;
+    c.strokeStyle = INK;
+    c.lineCap = 'round';
+    if (rest || blink) {
+      c.lineWidth = 1.1;
+      c.beginPath();
+      c.arc(13.2, -33.6 + hb, 2.1, Math.PI * 0.15, Math.PI * 0.85);
+      c.stroke();
+    } else {
+      c.fillStyle = '#ffffff';
+      ellipse(c, 13.2, -33.2 + hb, 2.7, 2.7);
+      c.fillStyle = INK;
+      ellipse(c, 14.1, -33.1 + hb, 1.45, 1.45);
+      c.fillStyle = '#ffffff';
+      ellipse(c, 14.6, -33.8 + hb, 0.5, 0.5);
+    }
+    c.fillStyle = INK;
+    ellipse(c, 22.6, -30 + hb, 0.7, 0.7);
+    c.lineWidth = 0.9;
+    c.beginPath();
+    c.arc(19.5, -28.2 + hb, 3, Math.PI * 0.25, Math.PI * 0.7);
+    c.stroke();
+
+    // helmet: long rear brim, domed crown with a comb, brass shield up front
+    c.save();
+    c.translate(10.5, -37.2 + hb);
+    c.rotate(rest ? -0.28 : 0);
+    c.fillStyle = HELMET_DARK;
+    ellipse(c, -2, 1.6, 13.5, 2.5);
+    c.fillStyle = HELMET;
+    c.beginPath();
+    c.moveTo(-8.2, 1.6);
+    c.bezierCurveTo(-8.2, -9.5, 8.2, -9.5, 8.2, 1.6);
+    c.closePath();
+    c.fill();
+    c.strokeStyle = HELMET_DARK;
+    c.lineWidth = 1.3;
+    c.beginPath();
+    c.moveTo(-6.5, -4.6);
+    c.quadraticCurveTo(0, -10.4, 6.5, -4.6);
+    c.stroke();
+    c.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+    c.lineWidth = 1;
+    c.beginPath();
+    c.arc(-1, -1, 5, Math.PI * 1.15, Math.PI * 1.45);
+    c.stroke();
+    c.fillStyle = BRASS;
+    c.beginPath();
+    c.moveTo(6.2, -5.8);
+    c.lineTo(10.4, -5.8);
+    c.lineTo(10.4, -2.2);
+    c.quadraticCurveTo(8.3, 0.4, 6.2, -2.2);
+    c.closePath();
+    c.fill();
+    c.fillStyle = HELMET_DARK;
+    ellipse(c, 8.3, -3.6, 0.9, 0.9);
+    c.restore();
+
+    if (rest) {
+      // nozzle set down, arms folded: the incident is over
+      c.fillStyle = STEEL;
+      roundRect(c, 15, -3.4, 11, 3.2, 1.2);
+      c.fill();
+      c.fillStyle = BRASS;
+      c.fillRect(25, -3.9, 2.6, 4.2);
+      c.strokeStyle = SHADE;
+      c.lineWidth = 3.2;
+      c.beginPath();
+      c.moveTo(5, -17 + bob);
+      c.lineTo(9, -14.5 + bob);
+      c.stroke();
+    } else {
+      c.save();
+      c.translate(13, -19 + bob);
+      c.rotate(this.aim);
+      c.fillStyle = STEEL;
+      roundRect(c, 0, -1.7, 11, 3.4, 1.2);
+      c.fill();
+      c.fillStyle = BRASS;
+      c.fillRect(10, -2.3, 3, 4.6);
+      c.fillStyle = '#5b6873';
+      c.fillRect(3, -3.6, 2, 1.9);
+      c.restore();
+      c.strokeStyle = SHADE;
+      c.lineWidth = 3.4;
+      c.beginPath();
+      c.moveTo(6, -21 + bob);
+      c.lineTo(12.5, -19 + bob);
+      c.stroke();
+      c.fillStyle = BODY;
+      ellipse(c, 13, -19 + bob, 2.3, 2.3);
+    }
+    c.restore();
+  }
+
+  private drawWater(): void {
+    const c = this.ctx;
+    if (this.reduced) {
+      // still stream: one steady arc instead of a shower of drops
+      if (!this.spraying) return;
+      const { vx, vy, T } = this.launch();
+      const [hx, hy] = this.hands();
+      const end = this.target ? T : T / 2;
+      c.strokeStyle = 'rgba(140, 220, 255, 0.75)';
+      c.lineWidth = 3 * this.s;
+      c.lineCap = 'round';
+      c.beginPath();
+      for (let i = 0; i <= 24; i++) {
+        const tt = (end * i) / 24;
+        const x = hx + vx * tt;
+        const y = hy + vy * tt + 0.5 * GRAVITY * tt * tt;
+        if (i === 0) c.moveTo(x, y);
+        else c.lineTo(x, y);
+      }
+      c.stroke();
+      return;
+    }
+    c.lineCap = 'round';
+    c.strokeStyle = 'rgba(150, 224, 255, 0.85)';
+    for (const p of this.particles) {
+      if (p.k !== 'water') continue;
+      c.lineWidth = p.r;
+      c.beginPath();
+      c.moveTo(p.x, p.y);
+      c.lineTo(p.x - p.vx * 0.012, p.y - p.vy * 0.012);
+      c.stroke();
+    }
+    c.fillStyle = 'rgba(170, 230, 255, 0.8)';
+    for (const p of this.particles) {
+      if (p.k !== 'splash') continue;
+      c.fillRect(p.x, p.y, p.r, p.r);
+    }
+  }
+
+  /** Spray caught on the underside of the terminal, swelling until it drips. */
+  private drawBeads(): void {
+    if (!this.beads.length) return;
+    const c = this.ctx;
+    const y0 = this.termBottom;
+    for (const b of this.beads) {
+      const swell = 1 + Math.min(1, b.age / b.drip) * 0.35;
+      const r = b.r * swell;
+      c.fillStyle = 'rgba(150, 224, 255, 0.75)';
+      c.beginPath();
+      c.moveTo(b.x - r * 0.7, y0);
+      c.quadraticCurveTo(b.x - r, y0 + r * 1.2, b.x, y0 + r * 2);
+      c.quadraticCurveTo(b.x + r, y0 + r * 1.2, b.x + r * 0.7, y0);
+      c.closePath();
+      c.fill();
+      c.fillStyle = 'rgba(255, 255, 255, 0.7)';
+      c.fillRect(b.x - r * 0.3, y0 + r * 0.8, Math.max(0.8, r * 0.35), Math.max(0.8, r * 0.35));
+    }
+  }
+
+  /** Name tags over each incident, so the visitor knows what they are putting out. */
+  private fontSize(): number {
+    return this.W < 480 ? 10 : Math.round(clamp(10 * this.s + 1, 10, 13));
+  }
+
+  private drawLabels(t: number): void {
+    const c = this.ctx;
+    const fs = this.fontSize();
+    c.font = `500 ${fs}px 'JetBrains Mono', ui-monospace, monospace`;
+    c.textBaseline = 'middle';
+    c.textAlign = 'left';
+    const ph = fs + 8;
+    // centred over their fires where there is room; on a phone, nudged apart so none overlap
+    const tags = this.fires.map((f) => {
+      const text = f.out ? `${f.label} ✓` : f.label;
+      const pw = c.measureText(text).width + 20;
+      return { f, text, pw, x: f.x - pw / 2 };
+    });
+    for (let i = 0; i < tags.length; i++) {
+      tags[i].x = Math.max(tags[i].x, i ? tags[i - 1].x + tags[i - 1].pw + 4 : 4);
+    }
+    for (let i = tags.length - 1; i >= 0; i--) {
+      const limit = i < tags.length - 1 ? tags[i + 1].x - 4 : this.W - 4;
+      tags[i].x = Math.max(4, Math.min(tags[i].x, limit - tags[i].pw));
+    }
+    for (const { f, text, pw, x } of tags) {
+      const y = f.roof - this.L * 0.3 - ph - 4;
+      const aimed = !f.out && f === this.target && this.playing;
+      c.fillStyle = 'rgba(5, 7, 10, 0.8)';
+      roundRect(c, x, y, pw, ph, 4);
+      c.fill();
+      c.strokeStyle = f.out ? 'rgba(53, 255, 158, 0.55)' : aimed ? 'rgba(86, 216, 255, 0.9)' : 'rgba(255, 92, 108, 0.6)';
+      c.lineWidth = 1;
+      c.stroke();
+      const pulse = f.out || this.reduced ? 1 : 0.6 + 0.4 * Math.sin(t * 5 + f.seed);
+      c.fillStyle = f.out ? '#35ff9e' : '#ff5c6c';
+      c.globalAlpha = pulse;
+      ellipse(c, x + 9, y + ph / 2, 2.6, 2.6);
+      c.globalAlpha = 1;
+      c.fillStyle = f.out ? '#35ff9e' : '#ffd9d2';
+      c.fillText(text, x + 16, y + ph / 2 + 0.5);
+      if (!f.out) {
+        c.fillStyle = 'rgba(255, 92, 108, 0.85)';
+        c.fillRect(x + 3, y + ph - 3, (pw - 6) * f.hp, 1.5);
+      }
+    }
+  }
+
+  /** Speech bubbles for the moments that need words: the first hint, an empty tank, a pause, the end. */
+  private drawCallouts(): void {
+    const sc = this.mascotScale();
+    const headY = this.ground - 50 * sc;
+    if (this.resolved) {
+      this.bubble('uptime restored ✓', this.x, headY, '#35ff9e');
+    } else if (this.paused) {
+      this.bubble('paused · P or resume', this.W / 2, (this.termBottom + this.ground) / 2 + 8, '#7d8f9e');
+    } else if (this.dryNow) {
+      this.bubble('tank empty · let go to refill', this.x, headY, '#ffc857');
+    } else if (!this.hinted) {
+      this.bubble(this.coarse ? 'drag me · hold water' : 'A/D move · hold Space', this.x, headY, '#56d8ff');
+    }
+  }
+
+  private bubble(text: string, cx: number, bottom: number, tone: string): void {
+    const c = this.ctx;
+    const fs = Math.min(12, this.fontSize());
+    c.font = `500 ${fs}px 'JetBrains Mono', ui-monospace, monospace`;
+    c.textBaseline = 'middle';
+    c.textAlign = 'left';
+    const pw = c.measureText(text).width + 14;
+    const ph = fs + 8;
+    const x = clamp(cx - pw / 2, 4, this.W - pw - 4);
+    const y = bottom - ph - 5;
+    c.fillStyle = 'rgba(5, 7, 10, 0.88)';
+    roundRect(c, x, y, pw, ph, 5);
+    c.fill();
+    c.strokeStyle = tone;
+    c.globalAlpha = 0.7;
+    c.lineWidth = 1;
+    c.stroke();
+    c.globalAlpha = 1;
+    const tx = clamp(cx, x + 8, x + pw - 8);
+    c.fillStyle = 'rgba(5, 7, 10, 0.88)';
+    c.beginPath();
+    c.moveTo(tx - 4, y + ph);
+    c.lineTo(tx, y + ph + 5);
+    c.lineTo(tx + 4, y + ph);
+    c.closePath();
+    c.fill();
+    c.fillStyle = tone;
+    c.fillText(text, x + 7, y + ph / 2 + 0.5);
+  }
+}

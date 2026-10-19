@@ -1,21 +1,23 @@
 /**
  * kracked.sh — entry point.
  *
- * Wires the DOM to the shell: boot sequence, input handling, completion,
- * history, the attach layer toggle and an idle demo loop so a visitor who
- * types nothing still sees the page work.
+ * Wires welcome, visual browsing and the opt-in shell into one frame. Shell
+ * history and commands survive view changes; the background game stays optional.
  */
 
 import './style.css';
-import { REGISTRY, COMMAND_NAMES, banner, boot } from './term/commands';
+import { REGISTRY, COMMAND_NAMES, banner } from './term/commands';
 import { tokenize, History, type Ctx } from './term/shell';
 import { Graph } from './term/graph';
 import { City, type Building } from './term/city';
 import { Sky } from './term/sky';
+import { DistrictWorld } from './term/district-world';
+import { DESTINATIONS } from './destinations';
 import { line, blank, echo, raw, cmdRow } from './term/output';
 import { MEMBERS } from './data';
 import { countCmd, setProjectTable, setDemoMode } from './term/progress';
 import { SHOWCASE } from './showcase';
+import { Browser, BUILDERS } from './browse';
 
 // the persisted run stores indices into this table, so install it before any
 // command runs — progress.ts hydrates itself from localStorage at this point
@@ -39,10 +41,50 @@ const skyEl     = document.getElementById('sky')!;
 const skyCanvas = document.getElementById('skyCanvas') as HTMLCanvasElement;
 const skyWhere  = document.getElementById('skyWhere')!;
 const skyNote   = document.getElementById('skyNote')!;
+const worldEl   = document.getElementById('districtWorld')!;
 const history = new History();
 let graph: Graph | null = null;
 let city: City | null = null;
 let sky: Sky | null = null;
+type View = 'welcome' | 'directory' | 'browse' | 'terminal';
+let view: View = 'welcome';
+let browserView: Browser | null = null;
+let shellStarted = false;
+
+function focusView(): void {
+  if (world.active || graph?.isRunning || city?.isRunning || sky?.isRunning) return;
+  if (view === 'terminal') input.focus({ preventScroll: true });
+  else if (view === 'browse') browserView?.focusEntry();
+  else if (view === 'directory') document.getElementById('directoryTitle')!.focus({ preventScroll: true });
+  else document.getElementById('welcomeExplore')!.focus({ preventScroll: true });
+}
+
+function showView(next: View): void {
+  cancelDemo();
+  clearTimeout(idleTimer);
+  if (view === 'browse') browserView?.saveScroll();
+  view = next;
+  for (const panel of document.querySelectorAll<HTMLElement>('[data-view-panel]')) {
+    panel.hidden = panel.dataset.viewPanel !== next;
+  }
+  termEl.dataset.view = next;
+  if (next === 'browse') {
+    browserView ??= new Browser({
+      root: document.getElementById('browse')!,
+      onChange(state) { cwdEl.textContent = state.tab; },
+    });
+    browserView.restoreScroll();
+    cwdEl.textContent = browserView.state.tab;
+  } else {
+    cwdEl.textContent = next === 'welcome' ? '~' : next;
+  }
+  if (next === 'terminal' && !shellStarted) {
+    shellStarted = true;
+    startShell();
+  }
+  focusView();
+  if (next === 'terminal') resetIdle();
+}
 /** Set while the city is entering a project, so the shell does not double-report. */
 let cityEntering = false;
 function setBusy(on: boolean): void {
@@ -125,7 +167,7 @@ const ctx: Ctx = {
       graph?.stop();
       // term still carries .term--detached at this point, and focusing a
       // visibility:hidden input is a silent no-op — wait for the style flush
-      requestAnimationFrame(() => input.focus());
+      requestAnimationFrame(focusView);
     }
   },
   explore(id) {
@@ -358,7 +400,7 @@ function cityExit(why?: string): void {
   termEl.classList.remove('term--detached');
   if (why) append(line(`  left the city (${why}).`, 'line--dim'));
   ctx.status('ready');
-  requestAnimationFrame(() => input.focus());
+  requestAnimationFrame(focusView);
 }
 
 document.addEventListener('keydown', (e) => {
@@ -383,7 +425,7 @@ function skyExit(why?: string): void {
   termEl.classList.remove('term--detached');
   if (why) append(line(`  left the sky (${why}).`, 'line--dim'));
   ctx.status('ready');
-  requestAnimationFrame(() => input.focus());
+  requestAnimationFrame(focusView);
 }
 
 document.addEventListener('keydown', (e) => {
@@ -485,13 +527,15 @@ input.addEventListener('keydown', (e) => {
 
 // clicking anywhere in the scrollback refocuses the prompt
 screen.addEventListener('click', () => {
-  if (!graph?.isRunning) input.focus();
+  if (view === 'terminal' && !world.active && !termEl.classList.contains('term--detached')) input.focus();
 });
 
 screen.addEventListener('scroll', () => {
   // scrolling up to read is the visitor saying "stop following"
   if (!atBottom()) anchor = false;
   if (document.activeElement === input) return;
+  // World controls own focus; late shell output must never take it back.
+  if (world.active || view !== 'terminal' || termEl.classList.contains('term--detached')) return;
   if (screen.scrollTop + screen.clientHeight < screen.scrollHeight - 4) return;
   input.focus({ preventScroll: true });
 });
@@ -504,7 +548,7 @@ let demoRunning = false;
 
 function resetIdle() {
   clearTimeout(idleTimer);
-  if (demoRunning) return;
+  if (demoRunning || view !== 'terminal' || world.active || termEl.classList.contains('term--detached')) return;
   idleTimer = window.setTimeout(runDemo, 14000);
 }
 
@@ -520,7 +564,8 @@ function cancelDemo(): void {
 }
 
 async function runDemo() {
-  if (demoRunning || input.value.trim() || graph?.isRunning) return;
+  // never type over someone who is playing; exit() re-arms the timer
+  if (view !== 'terminal' || demoRunning || input.value.trim() || graph?.isRunning || city?.isRunning || sky?.isRunning || world.active) return;
   demoRunning = true;
   // the walkthrough is a preview: it must never credit the visitor's run
   setDemoMode(true);
@@ -578,7 +623,7 @@ let nudgeTimer = 0;
 function scheduleNudge(): void {
   clearTimeout(nudgeTimer);
   nudgeTimer = window.setTimeout(() => {
-    if (demoRunning || graph?.isRunning || input.value.trim()) return;
+    if (view !== 'terminal' || world.active || demoRunning || graph?.isRunning || city?.isRunning || sky?.isRunning || input.value.trim()) return;
     if (document.querySelector('.suggest')) return;
     append(blank());
     const row = cmdRow('  where to?', [
@@ -591,6 +636,103 @@ function scheduleNudge(): void {
   }, 6000);
 }
 
+/* ------------------------------------------------------- district world --- */
+
+let worldReturnFocus: HTMLElement | null = null;
+let worldReturnView: View = 'welcome';
+const world = new DistrictWorld({
+  root: worldEl,
+  destinations: DESTINATIONS,
+  onExit() {
+    termEl.hidden = false;
+    termEl.inert = termEl.classList.contains('term--detached');
+    requestAnimationFrame(() => {
+      if (world.active) return;
+      if (view === worldReturnView && worldReturnFocus?.isConnected && !termEl.inert) {
+        worldReturnFocus.focus({ preventScroll: true });
+      } else focusView();
+    });
+    resetIdle();
+  },
+  onShowcase() {
+    if (world.active) world.exit();
+    worldReturnFocus = null;
+    showView('browse');
+  },
+});
+
+function enterWorld(): void {
+  if (world.active || termEl.classList.contains('term--detached')) return;
+  cancelDemo();
+  clearTimeout(idleTimer);
+  worldReturnView = view;
+  worldReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  termEl.inert = true;
+  termEl.hidden = true;
+  world.enter();
+}
+
+// Legacy terminal worlds keep their own controls and suspend the passive city.
+new MutationObserver(() => {
+  const detached = termEl.classList.contains('term--detached');
+  termEl.inert = detached || world.active;
+  world.suspend(detached);
+  if (detached) {
+    cancelDemo();
+    clearTimeout(idleTimer);
+  } else resetIdle();
+}).observe(termEl, { attributes: true, attributeFilter: ['class'] });
+(window as unknown as Record<string, unknown>).__districtWorld = world;
+
+function renderDirectory(): void {
+  const root = document.getElementById('districtDirectory')!;
+  for (const district of ['community', 'school', 'labs'] as const) {
+    const section = document.createElement('section');
+    section.className = `directory__district directory__district--${district}`;
+    const title = document.createElement('h3');
+    title.id = `directory-${district}`;
+    title.textContent = district[0].toUpperCase() + district.slice(1);
+    section.setAttribute('aria-labelledby', title.id);
+    section.append(title);
+    const list = document.createElement('ul');
+    for (const destination of DESTINATIONS.filter((item) => item.district === district)) {
+      const item = document.createElement('li');
+      item.className = 'destination';
+      item.dataset.destination = destination.id;
+      let label: HTMLElement;
+      if (destination.action === 'showcase') {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.addEventListener('click', () => showView('browse'));
+        label = button;
+      } else if (destination.href && !destination.soon) {
+        const link = document.createElement('a');
+        link.href = destination.href;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        label = link;
+      } else {
+        label = document.createElement('span');
+      }
+      label.className = 'destination__title';
+      label.textContent = destination.title;
+      item.append(label);
+      if (destination.soon) {
+        const badge = document.createElement('span');
+        badge.className = 'destination__soon';
+        badge.textContent = 'Coming soon';
+        item.append(badge);
+      }
+      const description = document.createElement('p');
+      description.textContent = destination.description;
+      item.append(description);
+      list.append(item);
+    }
+    section.append(list);
+    root.append(section);
+  }
+}
+
 /* --------------------------------------------------------------- start-up --- */
 
 function tick() {
@@ -598,37 +740,26 @@ function tick() {
   clockEl.textContent = d.toLocaleTimeString('en-GB');
 }
 
-async function start() {
-  tick();
-  setInterval(tick, 1000);
-
+function startShell(): void {
   append(banner());
-  append(raw(
-    `<span style="color:var(--fg-dim)">  ${'kracked.sh'.padEnd(12)}</span>` +
-    `<span style="color:var(--fg-faint)">community shell · v0.1.0 · English build</span>`,
-  ));
-  append(raw(
-    `<span style="color:var(--fg-faint)">  type </span>` +
-    `<span style="color:var(--green)">help</span>` +
-    `<span style="color:var(--fg-faint)"> to start, or </span>` +
-    `<span style="color:var(--green)">player</span>` +
-    `<span style="color:var(--fg-faint)"> for your run, or </span>` +
-    `<span style="color:var(--green)">attach</span>` +
-    `<span style="color:var(--fg-faint)"> to see the map.</span>`,
-  ));
+  append(line('  Your community shell. Type help, or choose a starting point.', 'line--dim'));
+  append(cmdRow('  explore:', [['guided tour', 'start'], ['projects', 'showcase'], ['your player card', 'player']]));
   append(blank());
-
-  await boot(ctx);
-  append(blank());
-  await ctx.run('motd');
-
-  input.focus();
-  resetIdle();
-
-  // keep the terminal focused when the tab regains visibility
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && !graph?.isRunning) input.focus();
-  });
 }
 
-void start();
+for (const button of document.querySelectorAll<HTMLButtonElement>('[data-go]')) {
+  button.addEventListener('click', () => showView(button.dataset.go as View));
+}
+document.getElementById('welcomeExplore')!.addEventListener('click', enterWorld);
+document.getElementById('exploreCity')!.addEventListener('click', enterWorld);
+renderDirectory();
+for (const n of document.querySelectorAll<HTMLElement>('[data-stat]')) {
+  if (n.dataset.stat === 'projects') n.textContent = String(SHOWCASE.length);
+  if (n.dataset.stat === 'builders') n.textContent = String(BUILDERS.length);
+}
+tick();
+setInterval(tick, 1000);
+// Do not summon the mobile keyboard or steal focus on a passive page visit.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && view === 'terminal') focusView();
+});

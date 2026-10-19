@@ -4,9 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>kracked.sh — Kracked Devs Community</title>
-  <meta name="description" content="A terminal-first community page for Kracked Devs. Type, ship, get seen." />
+  <meta name="description" content="Welcome to Kracked City. Explore Community, School and Labs, browse every destination, or use the optional community terminal." />
   <meta property="og:title" content="kracked.sh" />
-  <meta property="og:description" content="Reimagine the Kracked Devs community page as a shell." />
+  <meta property="og:description" content="A city built by developers. Come see what they shipped." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
@@ -19,7 +19,8 @@
     <div class="crt__vignette" aria-hidden="true"></div>
     <div class="crt__flicker" aria-hidden="true"></div>
 
-    <main class="term" id="term">
+    <!-- One compact briefing, directory and optional terminal over the city. -->
+    <main class="term" id="term" data-view="welcome">
       <header class="term__bar">
         <div class="term__dots" aria-hidden="true">
           <span class="dot dot--r"></span>
@@ -29,34 +30,145 @@
         <div class="term__title">
           <span class="term__path">kracked@devs</span><span class="term__sep">:</span><span class="term__cwd" id="cwd">~</span>
         </div>
-        <nav class="term__hint" aria-hidden="true">
+        <div class="term__hint" aria-hidden="true">
           <span><kbd>Tab</kbd> complete</span>
           <span><kbd>↑</kbd><kbd>↓</kbd> history</span>
           <span><kbd>Ctrl</kbd>+<kbd>L</kbd> clear</span>
-        </nav>
+        </div>
       </header>
 
-      <div class="term__body" id="screen" role="log" aria-live="polite" aria-label="Terminal output">
-        <!-- boot + output rendered here -->
-      </div>
-
-      <form class="term__prompt" id="promptForm" autocomplete="off">
-        <label class="sr-only" for="cmd">Command input</label>
-        <span class="ps1" aria-hidden="true"><span class="ps1__user">visitor</span><span class="ps1__at">@</span><span class="ps1__host">kracked.sh</span><span class="ps1__c">:</span><span class="ps1__dir">~</span><span class="ps1__dollar">$</span></span>
-        <div class="ps1__inputwrap">
-          <input id="cmd" name="cmd" class="ps1__input" type="text" spellcheck="false"
-                 autocapitalize="off" autocomplete="off" autocorrect="off" aria-describedby="hint" />
-          <span class="caret" id="caret" aria-hidden="true"></span>
+      <!-- welcome: the default, small and quiet -->
+      <section class="view welcome" id="welcome" data-view-panel="welcome" aria-labelledby="welcomeTitle">
+        <p class="welcome__kicker">Kracked Devs · field notes / 001</p>
+        <h1 class="welcome__title" id="welcomeTitle" tabindex="-1">Welcome to Kracked City.</h1>
+        <p class="welcome__lede">Three districts. Collect supplies.<br />Bring the city back to life.</p>
+        <div class="welcome__ctas">
+          <button type="button" class="btn btn--primary btn--lg" id="welcomeExplore" aria-controls="districtWorld">Start exploring</button>
+          <button type="button" class="btn" id="welcomeBrowse" data-go="directory">Browse without playing</button>
+          <button type="button" class="btn" id="welcomeTerminal" data-go="terminal">Use terminal</button>
         </div>
-      </form>
+        <p class="welcome__note">Community / School / Labs<br />Collect 3 water cells in each district, then put out its fire. Every destination is always open. Game progress stays on this device, never real KD XP.</p>
+      </section>
+
+      <section class="view directory" id="directory" data-view-panel="directory" aria-labelledby="directoryTitle" hidden>
+        <nav class="browse__nav" aria-label="City directory">
+          <button type="button" class="btn btn--ghost btn--sm" data-go="welcome">← Briefing</button>
+          <span class="browse__spacer"></span>
+          <button type="button" class="btn btn--ghost btn--sm" data-go="terminal">Use terminal</button>
+        </nav>
+        <div class="directory__scroll">
+          <p class="welcome__kicker">Kracked City / destination directory</p>
+          <h2 class="panel__title" id="directoryTitle" tabindex="-1">Three districts. All doors open.</h2>
+          <p class="panel__lede">Visit directly, no supplies or game progress needed. External destinations open in a new tab.</p>
+          <div class="directory__districts" id="districtDirectory"></div>
+        </div>
+      </section>
+
+      <!-- the visual browser -->
+      <section class="view browse" id="browse" data-view-panel="browse" aria-label="Browse the showcase" hidden>
+        <nav class="browse__nav" aria-label="Showcase">
+          <button type="button" class="tab" data-tab="projects" aria-current="page">Projects</button>
+          <button type="button" class="tab" data-tab="builders">Builders</button>
+          <button type="button" class="tab" data-tab="about">About</button>
+          <button type="button" class="btn btn--ghost btn--sm" data-go="directory">All destinations</button>
+          <span class="browse__spacer"></span>
+          <button type="button" class="btn btn--ghost btn--sm" id="browseTerminal" data-go="terminal">Terminal</button>
+        </nav>
+
+        <div class="browse__scroll" data-browse="scroll">
+          <div class="panel" data-panel="projects">
+            <h2 class="sr-only">Projects</h2>
+            <form class="search" role="search" data-browse="searchForm">
+              <label class="search__label" for="projectSearch">Search projects</label>
+              <div class="search__row">
+                <input class="search__input" id="projectSearch" type="search" name="q"
+                       placeholder="title, builder or stack" autocomplete="off" spellcheck="false"
+                       aria-describedby="projectCount" />
+                <button type="button" class="btn btn--ghost btn--sm" data-browse="clear" hidden>Clear</button>
+              </div>
+            </form>
+            <div class="chip" data-browse="chip" hidden>
+              <span data-browse="chipText"></span>
+              <button type="button" class="btn btn--ghost btn--sm" data-browse="chipClear">Show all projects</button>
+            </div>
+            <p class="browse__count" id="projectCount" data-browse="count" role="status" aria-live="polite"></p>
+            <ul class="cards" data-browse="cards" aria-label="Projects"></ul>
+            <div class="browse__empty" data-browse="empty" hidden>
+              <p>Nothing here. Try a stack like <em>react</em>, a builder's handle, or fewer words.</p>
+              <button type="button" class="btn btn--sm" data-browse="emptyClear">Clear search</button>
+            </div>
+            <button type="button" class="btn browse__more" data-browse="more" hidden>Load more</button>
+          </div>
+
+          <div class="panel" data-panel="builders" hidden>
+            <h2 class="panel__title">Builders</h2>
+            <p class="panel__lede">Everyone with a project in the showcase, most projects first. Pick one to see what they shipped.</p>
+            <form class="search" role="search" data-browse="builderForm">
+              <label class="search__label" for="builderSearch">Find a builder</label>
+              <div class="search__row">
+                <input class="search__input" id="builderSearch" type="search" name="builder"
+                       placeholder="handle" autocomplete="off" spellcheck="false" aria-describedby="builderCount" />
+              </div>
+            </form>
+            <p class="browse__count" id="builderCount" data-browse="bcount" role="status" aria-live="polite"></p>
+            <ul class="builders" data-browse="builders" aria-label="Builders"></ul>
+            <button type="button" class="btn browse__more" data-browse="bmore" hidden>Load more</button>
+          </div>
+
+          <div class="panel about" data-panel="about" hidden>
+            <h2 class="panel__title">About Kracked Devs</h2>
+            <p class="about__tag" data-copy="tagline"></p>
+            <p>Kracked Devs is a builder community that runs on shipping, not talking about shipping. Bounties are short, scoped and judged by the people who build here. The showcase is the only résumé that matters.</p>
+            <dl class="about__stats">
+              <div><dt>projects</dt><dd data-stat="projects">0</dd></div>
+              <div><dt>builders</dt><dd data-stat="builders">0</dd></div>
+              <div><dt>with a live site</dt><dd data-stat="live">0</dd></div>
+              <div><dt>with source</dt><dd data-stat="repos">0</dd></div>
+            </dl>
+            <p class="about__note">These numbers are counted from this page's snapshot of the public showcase, refreshed from krackeddevs.com with <code>npm run sync-showcase</code>.</p>
+            <h3 class="panel__sub">This page</h3>
+            <p>Projects and Builders show the showcase as cards. The terminal shows the same projects, plus bounties, a player card, a walkable city, a sky of projects and the community map. <button type="button" class="linkish" data-go="terminal">Open the terminal</button> and type <code>help</code>.</p>
+            <ul class="about__links">
+              <li><a class="btn btn--sm" href="https://krackeddevs.com" target="_blank" rel="noopener noreferrer">krackeddevs.com ↗</a></li>
+              <li><a class="btn btn--sm" href="https://krackeddevs.com/showcase" target="_blank" rel="noopener noreferrer">The showcase ↗</a></li>
+              <li><a class="btn btn--sm" href="https://krackeddevs.com/showcase/submit" target="_blank" rel="noopener noreferrer">Submit a project ↗</a></li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- the terminal: optional, and always one click from the browser -->
+      <section class="view shell" id="shell" data-view-panel="terminal" aria-label="Terminal" hidden>
+        <div class="shell__bar">
+          <button type="button" class="btn btn--sm" id="backToBrowse" data-go="browse">← Back to browse</button>
+          <span class="shell__note">terminal mode · type <code>help</code></span>
+        </div>
+
+        <div class="term__body" id="screen" role="log" aria-live="polite" aria-label="Terminal output" tabindex="-1">
+          <!-- output rendered here -->
+        </div>
+
+        <form class="term__prompt" id="promptForm" autocomplete="off">
+          <label class="sr-only" for="cmd">Command input</label>
+          <span class="ps1" aria-hidden="true"><span class="ps1__user">visitor</span><span class="ps1__at">@</span><span class="ps1__host">kracked.sh</span><span class="ps1__c">:</span><span class="ps1__dir">~</span><span class="ps1__dollar">$</span></span>
+          <div class="ps1__inputwrap">
+            <input id="cmd" name="cmd" class="ps1__input" type="text" spellcheck="false"
+                   autocapitalize="off" autocomplete="off" autocorrect="off" aria-describedby="hint" />
+            <span class="caret" id="caret" aria-hidden="true"></span>
+          </div>
+        </form>
+      </section>
 
       <footer class="term__status">
         <span id="statusL">●</span>
         <span id="status">ready</span>
         <span class="term__spacer"></span>
+        <button type="button" class="btn btn--ghost btn--sm city-entry" id="exploreCity" aria-controls="districtWorld">Explore city</button>
         <span id="clock">--:--:--</span>
       </footer>
     </main>
+
+    <div class="district-world" id="districtWorld"></div>
 
     <!-- canvas layer for `attach` -->
     <div class="graph" id="graph" aria-hidden="true">
